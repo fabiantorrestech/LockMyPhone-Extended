@@ -6,7 +6,11 @@ import com.fabiantorrestech.lockmyphone_extended.core.dnd.labelRes
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmActiveRule
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTriggerKind
-import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMatch
+import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarLengthMode
+import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
+import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
+import com.fabiantorrestech.lockmyphone_extended.data.db.ChargerMode
+import com.fabiantorrestech.lockmyphone_extended.data.db.PlaceSignal
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
@@ -67,19 +71,42 @@ fun formatProfileSummary(context: Context, profile: LockProfile): String {
     return parts.joinToString("\n")
 }
 
+/** "“Focus”, “#lock” → Night · until the event ends" or "Any event → Quick lock · 45m (off)". */
+fun formatCalendarTrigger(context: Context, trigger: CalendarTrigger, profileName: String?): String {
+    val what = if (trigger.keywords.isEmpty()) {
+        context.getString(R.string.calendar_any_event)
+    } else {
+        trigger.keywords.joinToString { "“$it”" }
+    }
+    val lock = profileName ?: context.getString(R.string.quick_lock)
+    val length = when (trigger.lengthMode) {
+        CalendarLengthMode.EVENT_END -> context.getString(R.string.calendar_until_end)
+        CalendarLengthMode.FIXED -> formatPresetLabel(trigger.fixedDurationSec)
+    }
+    val summary = "$what → $lock · $length"
+    return if (trigger.enabled) summary else context.getString(R.string.schedule_off, summary)
+}
+
 /** "While here → Night · 100 m", "On arrival → Quick lock · Wi-Fi Home · Sat, Sun (off)". */
 fun formatLocationTrigger(context: Context, trigger: LocationTrigger, profileName: String?): String {
     val lock = profileName ?: context.getString(R.string.quick_lock)
-    val wifi = trigger.wifiSsid ?: trigger.wifiBssid
-    val place = when {
-        trigger.wifiBssid == null || trigger.matchMode == LocationMatch.GPS_ONLY -> context.getString(R.string.meters_value, trigger.radiusMeters)
-        trigger.matchMode == LocationMatch.WIFI_ONLY -> context.getString(R.string.location_summary_wifi, wifi)
-        trigger.matchMode == LocationMatch.GPS_AND_WIFI -> context.getString(R.string.location_summary_gps_and_wifi, trigger.radiusMeters, wifi)
-        else -> context.getString(R.string.location_summary_gps_or_wifi, trigger.radiusMeters, wifi)
+    // e.g. "100 m + beacon Desk" (all needed) or "Wi-Fi Home / charger" (any one).
+    val parts = buildList {
+        if (trigger.usesGps) add(context.getString(R.string.meters_value, trigger.radiusMeters))
+        if (trigger.uses(PlaceSignal.WIFI)) add(context.getString(R.string.location_summary_wifi, trigger.wifiSsid ?: trigger.wifiBssid ?: "?"))
+        if (trigger.uses(PlaceSignal.BEACON)) add(context.getString(R.string.location_summary_beacon, trigger.beaconName ?: "?"))
+        if (trigger.uses(PlaceSignal.BT_DEVICE)) {
+            val summary = if (trigger.btDetection == BtDetection.NEARBY) R.string.location_summary_bt_near else R.string.location_summary_bt_connected
+            add(context.getString(summary, trigger.btName ?: "?"))
+        }
+        if (trigger.usesCharger) {
+            add(context.getString(if (trigger.chargerMode == ChargerMode.WIRELESS) R.string.location_summary_wireless else R.string.location_summary_charger))
+        }
     }
+    val place = parts.joinToString(if (trigger.requireAll) " + " else " / ")
     val days = when {
         // Time slots carry their own days.
-        trigger.mode == LocationMode.TIME_SLOTS -> null
+        trigger.mode == LocationMode.TIME_SLOTS || trigger.mode == LocationMode.CONDITION_ONLY -> null
         trigger.activeRule == AlarmActiveRule.EVERY_DAY -> null
         trigger.activeRule == AlarmActiveRule.WEEKDAYS -> formatDays(context, trigger.daysMask)
         trigger.activeRule == AlarmActiveRule.ONCE -> context.getString(R.string.active_once)

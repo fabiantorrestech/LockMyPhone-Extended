@@ -37,6 +37,8 @@ data class LockSchedule(
     val icon: String? = null,
     /** Position in the schedule list, set by dragging. Added in DB version 8. */
     @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0,
+    /** "Only while at" this place ([LocationTrigger] id); null = anywhere. Added in DB version 13. */
+    val requiredPlaceId: Long? = null,
 ) {
     fun runsOn(day: DayOfWeek): Boolean = daysMask and dayBit(day) != 0
 

@@ -29,6 +29,8 @@ class ScheduleScheduler(
     private val lockController: LockController,
     private val lockStarter: ProfileLockStarter,
     private val endScheduler: LockEndScheduler,
+    /** Whether you're at a place, for schedules set to "Only while at…". */
+    private val isAtPlace: (Long) -> Boolean,
     private val clock: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) {
 
@@ -56,7 +58,10 @@ class ScheduleScheduler(
         val now = clock()
 
         val suppressedUntilMs = prefs.getLong(KEY_SUPPRESSED_UNTIL, 0L)
-        ScheduleCalculator.activeWindow(schedules, now)
+        // A schedule that requires a place only locks while you're there; arriving mid-window
+        // calls sync() again (via the place manager), which then starts it.
+        val satisfied = schedules.filter { schedule -> schedule.requiredPlaceId?.let(isAtPlace) ?: true }
+        ScheduleCalculator.activeWindow(satisfied, now)
             ?.takeIf { it.end.toInstant().toEpochMilli() > suppressedUntilMs }
             ?.let { window ->
             val profile = withContext(Dispatchers.IO) { database.profileDao().getById(window.schedule.profileId) }

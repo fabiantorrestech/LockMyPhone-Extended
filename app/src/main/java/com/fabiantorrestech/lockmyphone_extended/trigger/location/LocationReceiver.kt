@@ -1,5 +1,7 @@
 package com.fabiantorrestech.lockmyphone_extended.trigger.location
 
+import android.bluetooth.le.BluetoothLeScanner
+import android.bluetooth.le.ScanResult
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -37,7 +39,15 @@ class LocationReceiver : BroadcastReceiver() {
                 val location = IntentCompat.getParcelableExtra(intent, LocationManager.KEY_LOCATION_CHANGED, Location::class.java)
                 launchAsync(scope) { manager.onWake(location?.toFix()) }
             }
-            ACTION_WIFI, ACTION_RECHECK -> launchAsync(scope) { manager.onWake() }
+            ACTION_WIFI -> launchAsync(scope) { manager.onWake(freshFix = false) }
+            ACTION_RECHECK -> launchAsync(scope) { manager.onWake() }
+            ACTION_BEACON -> {
+                val results = IntentCompat.getParcelableArrayListExtra(
+                    intent, BluetoothLeScanner.EXTRA_LIST_SCAN_RESULT, ScanResult::class.java,
+                ).orEmpty()
+                val sightings = results.flatMap(manager.beaconScanner::sightingsOf)
+                if (sightings.isNotEmpty()) launchAsync(scope) { manager.onBeaconSightings(sightings) }
+            }
             ACTION_SLOT -> launchAsync(scope) { manager.onWake(slotStarted = true) }
         }
     }
@@ -49,5 +59,6 @@ class LocationReceiver : BroadcastReceiver() {
         const val ACTION_WIFI = "com.fabiantorrestech.lockmyphone_extended.action.WIFI_CHANGED"
         const val ACTION_RECHECK = "com.fabiantorrestech.lockmyphone_extended.action.LOCATION_RECHECK"
         const val ACTION_SLOT = "com.fabiantorrestech.lockmyphone_extended.action.LOCATION_SLOT_START"
+        const val ACTION_BEACON = "com.fabiantorrestech.lockmyphone_extended.action.BEACON_SEEN"
     }
 }

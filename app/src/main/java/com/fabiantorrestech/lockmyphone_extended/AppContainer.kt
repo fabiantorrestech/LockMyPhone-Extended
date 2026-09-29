@@ -4,8 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.os.UserManager
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.GrayscaleController
+import com.fabiantorrestech.lockmyphone_extended.data.backup.BackupManager
 import com.fabiantorrestech.lockmyphone_extended.data.db.AppDatabase
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationStateStore
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.Presence
+import com.fabiantorrestech.lockmyphone_extended.trigger.calendar.CalendarTriggerManager
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationTriggerManager
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.trigger.ProfileLockStarter
@@ -78,12 +81,16 @@ class AppContainer(context: Context) {
 
     val profileLockStarter = ProfileLockStarter(lockController, appCatalog) { settingsStore }
 
+    /** Device-protected, so schedules can check "Only while at…" before the first unlock too. */
+    val locationStateStore = LocationStateStore(appContext)
+
     val scheduleScheduler = ScheduleScheduler(
         context = appContext,
         database = database,
         lockController = lockController,
         lockStarter = profileLockStarter,
         endScheduler = lockEndScheduler,
+        isAtPlace = { placeId -> locationStateStore.presence(placeId) == Presence.INSIDE },
     )
 
     val alarmLearning = AlarmLearning()
@@ -98,12 +105,34 @@ class AppContainer(context: Context) {
         LocationTriggerManager(
             context = appContext,
             database = database,
-            stateStore = LocationStateStore(appContext),
+            stateStore = locationStateStore,
             lockController = lockController,
             lockStarter = profileLockStarter,
             engineChoice = { settingsStore.locationEngine.value },
             dayStartMinutes = { settingsStore.alarmDayStartMinutes.value },
-        )
+        ).also { manager ->
+            // Arriving at a place can satisfy an "Only while at…" schedule or calendar trigger.
+            manager.onPlaceEntered = {
+                scheduleScheduler.sync()
+                calendarTriggerManager.sync()
+            }
+        }
+    }
+
+    val calendarTriggerManager by lazy {
+        CalendarTriggerManager(appContext, database, profileLockStarter) { placeId ->
+            locationStateStore.presence(placeId) == Presence.INSIDE
+        }
+    }
+
+    val backupManager by lazy {
+        BackupManager(appContext, database, { settingsStore }) {
+            // After a restore, re-arm everything that runs in the background.
+            scheduleScheduler.sync()
+            locationTriggerManager.sync()
+            calendarTriggerManager.sync()
+            alarmHealthChecker.check()
+        }
     }
 
     val alarmTriggerFirer = AlarmTriggerFirer(

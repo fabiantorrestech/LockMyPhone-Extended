@@ -73,9 +73,38 @@ import com.fabiantorrestech.lockmyphone_extended.ui.ProfileEditorScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.LockSettings
 import com.fabiantorrestech.lockmyphone_extended.ui.FixRequest
 import com.fabiantorrestech.lockmyphone_extended.ui.LocationEditorScreen
+import com.fabiantorrestech.lockmyphone_extended.ui.BeaconTools
+import com.fabiantorrestech.lockmyphone_extended.ui.PairedDeviceTools
+import com.fabiantorrestech.lockmyphone_extended.ui.PermissionsScreen
+import com.fabiantorrestech.lockmyphone_extended.ui.PermissionRow
+import com.fabiantorrestech.lockmyphone_extended.ui.PermissionActions
+import com.fabiantorrestech.lockmyphone_extended.ui.CORE_PERMISSIONS
+import com.fabiantorrestech.lockmyphone_extended.ui.grantedPermissions
+import com.fabiantorrestech.lockmyphone_extended.core.perm.AppPermission
+import com.fabiantorrestech.lockmyphone_extended.core.perm.PermissionNeeds
+import android.os.Handler
+import android.os.Looper
+import android.os.Process
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.PairedDevices
+import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
+import com.fabiantorrestech.lockmyphone_extended.ui.BeaconModeUiState
+import com.fabiantorrestech.lockmyphone_extended.core.service.BeaconMode
+import com.fabiantorrestech.lockmyphone_extended.ui.CalendarEditorScreen
+import com.fabiantorrestech.lockmyphone_extended.ui.BackupActions
+import com.fabiantorrestech.lockmyphone_extended.ui.BackupUiState
+import com.fabiantorrestech.lockmyphone_extended.ui.RestoreConfirmDialog
+import com.fabiantorrestech.lockmyphone_extended.data.backup.BackupContents
+import com.fabiantorrestech.lockmyphone_extended.data.backup.RestoreWarnings
+import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
+import com.fabiantorrestech.lockmyphone_extended.trigger.calendar.CalendarWindow
+import com.fabiantorrestech.lockmyphone_extended.trigger.calendar.DeviceCalendar
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationSlot
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMode
+import com.fabiantorrestech.lockmyphone_extended.data.db.PlaceSignal
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.ConnectedWifi
 import com.fabiantorrestech.lockmyphone_extended.core.apps.LaunchableApp
 import com.fabiantorrestech.lockmyphone_extended.ui.ReorderActions
@@ -91,7 +120,7 @@ import kotlinx.coroutines.launch
 /** The screens reachable while no lock is active. */
 private enum class Screen {
     HOME, DEVICE, DIAGNOSTICS, PROFILE, PROFILE_APPS, SCHEDULE, QUICK_APPS, ALARM_TRIGGER, ALARM_APP, DEFAULTS, DEFAULT_APPS,
-    LOCATION,
+    LOCATION, CALENDAR, PERMISSIONS,
 }
 
 // Play Services pulls in an old androidx.fragment, which trips this lint check. This activity is a
@@ -129,6 +158,56 @@ class MainActivity : ComponentActivity() {
     private val backgroundLocationLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { onLocationPermissionChanged() }
 
+    /** The backup folder: a document tree the app keeps access to. */
+    private val backupFolderLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+            container.settingsStore.setBackupFolder(uri.toString())
+        }
+
+    /** Auto backups' own folder (optional; the backup folder is used otherwise). */
+    private val autoBackupFolderLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+            container.settingsStore.setAutoBackupFolder(uri.toString())
+        }
+
+    /** A backup file to restore; read here, then confirmed in a dialog. */
+    private val pendingRestore = mutableStateOf<Pair<BackupContents, RestoreWarnings>?>(null)
+
+    private val restoreFileLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                runCatching { container.backupManager.readBackup(uri) }
+                    .onSuccess { contents -> pendingRestore.value = contents to container.backupManager.warningsFor(contents) }
+                    .onFailure { Toast.makeText(this@MainActivity, getString(R.string.backup_read_failed, it.message), Toast.LENGTH_LONG).show() }
+            }
+        }
+
+    private val bluetoothAdvertiseLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { BeaconMode.sync(this) }
+
+    private val bluetoothConnectLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { onLocationPermissionChanged() }
+
+    private val bluetoothScanLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { onLocationPermissionChanged() }
+
+    private val calendarPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            refreshSetupStatus()
+            lifecycleScope.launch { container.calendarTriggerManager.sync() }
+        }
+
     private val setupActions by lazy {
         SetupActions(
             onEnableAdmin = ::requestDeviceAdmin,
@@ -141,6 +220,9 @@ class MainActivity : ComponentActivity() {
             onGrantLocation = ::requestLocationPermission,
             onGrantBackgroundLocation = ::requestBackgroundLocation,
             onEnableLocationServices = { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) },
+            onGrantCalendar = { calendarPermissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
+            onGrantBluetoothScan = ::requestBluetoothScan,
+            onGrantBluetoothConnect = ::requestBluetoothConnect,
         )
     }
 
@@ -203,6 +285,9 @@ class MainActivity : ComponentActivity() {
         var fixRequest by remember { mutableStateOf<FixRequest>(FixRequest.Idle) }
         var currentWifi by remember { mutableStateOf<ConnectedWifi?>(null) }
         var slotDrafts by remember { mutableStateOf<List<LocationSlot>>(emptyList()) }
+        var calendarDraft by remember { mutableStateOf<CalendarTrigger?>(null) }
+        var deviceCalendars by remember { mutableStateOf<List<DeviceCalendar>>(emptyList()) }
+        var nextCalendarMatch by remember { mutableStateOf<CalendarWindow?>(null) }
         // The Lock defaults page edits a profile-shaped draft (no name, never saved as a profile).
         var defaultsDraft by remember { mutableStateOf<LockProfile?>(null) }
         // Kept here (not in HomeScreen) so the tab survives a trip into an editor.
@@ -214,6 +299,17 @@ class MainActivity : ComponentActivity() {
         val locations by container.database.locationTriggerDao().observeAll().collectAsState(initial = emptyList())
         val locationEngine by container.settingsStore.locationEngine.collectAsState()
         val locationManager = container.locationTriggerManager
+        val calendarManager = container.calendarTriggerManager
+        val calendarTriggers by container.database.calendarTriggerDao().observeAll().collectAsState(initial = emptyList())
+        val calendarSkipDeclined by container.settingsStore.calendarSkipDeclined.collectAsState()
+        val calendarSkipFree by container.settingsStore.calendarSkipFree.collectAsState()
+        val backupFolder by container.settingsStore.backupFolderUri.collectAsState()
+        val autoBackup by container.settingsStore.autoBackupEnabled.collectAsState()
+        val autoBackupFolder by container.settingsStore.autoBackupFolderUri.collectAsState()
+        val beaconModeEnabled by container.settingsStore.beaconModeEnabled.collectAsState()
+        val beaconModeStart by container.settingsStore.beaconModeStartMinutes.collectAsState()
+        val beaconModeEnd by container.settingsStore.beaconModeEndMinutes.collectAsState()
+        val lastBackupAt by container.settingsStore.lastBackupAtMs.collectAsState()
         val learning by container.alarmLearning.state.collectAsState()
         val alarmProblems by container.alarmTriggerHealth.problems.collectAsState()
         var upcomingQrAlarms by remember { mutableStateOf<List<QrAlarmUpcoming.Upcoming>>(emptyList()) }
@@ -306,6 +402,7 @@ class MainActivity : ComponentActivity() {
                         onReorderSchedules = { list -> scope.launch { container.database.scheduleDao().reorder(list.map { it.id }) } },
                         onReorderTriggers = { list -> scope.launch { container.database.alarmTriggerDao().reorder(list.map { it.id }) } },
                         onReorderLocations = { list -> scope.launch { container.database.locationTriggerDao().reorder(list.map { it.id }) } },
+                        onReorderCalendars = { list -> scope.launch { container.database.calendarTriggerDao().reorder(list.map { it.id }) } },
                     )
                 },
                 appLabel = container.appCatalog::label,
@@ -347,6 +444,53 @@ class MainActivity : ComponentActivity() {
                     }
                     screen = Screen.LOCATION
                 },
+                calendarTriggers = calendarTriggers,
+                onEditCalendar = { existing ->
+                    val store = container.settingsStore
+                    calendarDraft = existing ?: CalendarTrigger(
+                        name = "",
+                        skipDeclined = store.calendarSkipDeclined.value,
+                        skipFree = store.calendarSkipFree.value,
+                    )
+                    nextCalendarMatch = null
+                    scope.launch { deviceCalendars = withContext(Dispatchers.IO) { calendarManager.reader.calendars() } }
+                    screen = Screen.CALENDAR
+                },
+                calendarSkipDeclined = calendarSkipDeclined,
+                calendarSkipFree = calendarSkipFree,
+                onCalendarDefaultsChange = container.settingsStore::setCalendarDefaults,
+                backup = BackupUiState(
+                    folderName = backupFolder?.let { remember(it) { container.backupManager.folderName(Uri.parse(it)) } ?: it },
+                    autoFolderName = autoBackupFolder?.let { remember(it) { container.backupManager.folderName(Uri.parse(it)) } ?: it },
+                    autoBackup = autoBackup,
+                    lastBackupAtMs = lastBackupAt,
+                ),
+                beaconMode = BeaconModeUiState(
+                    enabled = beaconModeEnabled,
+                    startMinutes = beaconModeStart,
+                    endMinutes = beaconModeEnd,
+                    key = remember { BeaconMode.key(this) },
+                    batteryUnrestricted = setupStatus.value.batteryUnrestricted,
+                ),
+                onBeaconModeChange = { enabled, start, end ->
+                    container.settingsStore.setBeaconMode(enabled, start, end)
+                    if (enabled && !BeaconMode.hasPermission(this)) requestBluetoothAdvertise() else BeaconMode.sync(this)
+                },
+                backupActions = remember {
+                    BackupActions(
+                        onPickFolder = { backupFolderLauncher.launch(null) },
+                        onPickAutoFolder = { autoBackupFolderLauncher.launch(null) },
+                        onBackupNow = {
+                            scope.launch {
+                                container.backupManager.backupNow(auto = false)
+                                    .onSuccess { Toast.makeText(this@MainActivity, getString(R.string.backup_done, it), Toast.LENGTH_SHORT).show() }
+                                    .onFailure { Toast.makeText(this@MainActivity, getString(R.string.backup_failed, it.message), Toast.LENGTH_LONG).show() }
+                            }
+                        },
+                        onRestore = { restoreFileLauncher.launch(arrayOf("application/json", "application/octet-stream", "text/plain")) },
+                        onAutoBackupChange = container.settingsStore::setAutoBackupEnabled,
+                    )
+                },
                 locationEngine = locationEngine,
                 playServicesAvailable = remember { locationManager.playServices.isAvailable() },
                 onLocationEngineChange = { choice ->
@@ -367,6 +511,7 @@ class MainActivity : ComponentActivity() {
                     )
                 },
                 onOpenDiagnostics = { screen = Screen.DIAGNOSTICS },
+                onOpenPermissions = { screen = Screen.PERMISSIONS },
                 onOpenLockDefaults = {
                     defaultsDraft = container.settingsStore.lockDefaults.value.toProfileDraft()
                     screen = Screen.DEFAULTS
@@ -405,6 +550,36 @@ class MainActivity : ComponentActivity() {
                 },
                 modifier = modifier,
             )
+            Screen.CALENDAR -> calendarDraft?.let { draft ->
+                CalendarEditorScreen(
+                    draft = draft,
+                    profiles = profiles,
+                    hasPermission = setupStatus.value.calendarGranted,
+                    calendars = deviceCalendars,
+                    nextMatch = nextCalendarMatch,
+                    presetsSec = presetsSec,
+                    onRequestPermission = { calendarPermissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
+                    places = locations,
+                    onDraftChange = { calendarDraft = it },
+                    onSave = {
+                        scope.launch {
+                            val dao = container.database.calendarTriggerDao()
+                            if (draft.id == 0L) dao.insertLast(draft) else dao.update(draft)
+                            calendarManager.sync()
+                            goHome()
+                        }
+                    },
+                    onDelete = {
+                        scope.launch {
+                            container.database.calendarTriggerDao().delete(draft)
+                            calendarManager.sync()
+                            goHome()
+                        }
+                    },
+                    onBack = goHome,
+                    modifier = modifier,
+                )
+            }
             Screen.LOCATION -> locationDraft?.let { draft ->
                 LocationEditorScreen(
                     draft = draft,
@@ -414,6 +589,23 @@ class MainActivity : ComponentActivity() {
                     fixRequest = fixRequest,
                     currentWifi = currentWifi,
                     slots = slotDrafts,
+                    beaconTools = BeaconTools(
+                        hasPermission = setupStatus.value.bluetoothScanGranted,
+                        bluetoothOn = locationManager.beaconScanner.isBluetoothOn(),
+                        onRequestPermission = ::requestBluetoothScan,
+                        discover = { locationManager.beaconScanner.discover(BEACON_DISCOVER_MS) },
+                        sample = { key -> locationManager.beaconScanner.sample(key, BEACON_CALIBRATE_MS) },
+                    ),
+                    pairedDeviceTools = PairedDeviceTools(
+                        hasPermission = setupStatus.value.bluetoothConnectGranted,
+                        onRequestPermission = ::requestBluetoothConnect,
+                        list = { PairedDevices.list(this) },
+                        seenNearby = if (setupStatus.value.bluetoothScanGranted) {
+                            { locationManager.beaconScanner.seenAddresses(BEACON_DISCOVER_MS) }
+                        } else {
+                            null
+                        },
+                    ),
                     onSlotsChange = { slotDrafts = it },
                     onRequestLocationPermission = ::requestLocationPermission,
                     onUseCurrentLocation = {
@@ -434,7 +626,9 @@ class MainActivity : ComponentActivity() {
                     onSave = {
                         scope.launch {
                             val dao = container.database.locationTriggerDao()
-                            val id = if (draft.id == 0L) dao.insertLast(draft) else draft.id.also { dao.update(draft) }
+                            // A place without GPS keeps no coordinates, but the column can't hold "none".
+                            val place = if (draft.latitude.isNaN()) draft.copy(latitude = 0.0, longitude = 0.0) else draft
+                            val id = if (place.id == 0L) dao.insertLast(place) else place.id.also { dao.update(place) }
                             val slots = if (draft.mode == LocationMode.TIME_SLOTS) slotDrafts else emptyList()
                             container.database.locationSlotDao().replaceForLocation(id, slots)
                             locationManager.onTriggerSaved(id)
@@ -613,6 +807,7 @@ class MainActivity : ComponentActivity() {
                 ScheduleEditorScreen(
                     draft = draft,
                     profiles = profiles,
+                    places = locations,
                     onDraftChange = { scheduleDraft = it },
                     onSave = {
                         scope.launch {
@@ -640,6 +835,20 @@ class MainActivity : ComponentActivity() {
                     DeviceProfileSection(Modifier.padding(top = 16.dp))
                 }
             }
+            Screen.PERMISSIONS -> PermissionsScreen(
+                rows = permissionRows(
+                    status = setupStatus.value,
+                    profiles = profiles,
+                    alarmTriggers = alarmTriggers,
+                    places = locations,
+                    calendarTriggers = calendarTriggers,
+                    quickUsesDnd = quickDnd || quickGrayscale,
+                    beaconMode = beaconModeEnabled,
+                ),
+                actions = permissionActions,
+                onBack = goHome,
+                modifier = modifier,
+            )
             Screen.DIAGNOSTICS -> {
                 val entries by container.foregroundLog.entries.collectAsState()
                 DiagnosticsScreen(
@@ -660,11 +869,55 @@ class MainActivity : ComponentActivity() {
             if (screen == Screen.ALARM_TRIGGER && alarmDraft?.packageName?.let(QrAlarmUpcoming::isQrAlarm) == true) refreshUpcoming()
         }
 
-        // The location rows only matter once a location trigger exists.
+        pendingRestore.value?.let { (contents, warnings) ->
+            RestoreConfirmDialog(
+                contents = contents,
+                warnings = warnings,
+                onConfirm = {
+                    pendingRestore.value = null
+                    scope.launch {
+                        runCatching { container.backupManager.restore(contents) }
+                            .onSuccess {
+                                refreshSetupStatus()
+                                Toast.makeText(this@MainActivity, R.string.backup_restored, Toast.LENGTH_LONG).show()
+                            }
+                            .onFailure { Toast.makeText(this@MainActivity, getString(R.string.backup_restore_failed, it.message), Toast.LENGTH_LONG).show() }
+                    }
+                },
+                onDismiss = { pendingRestore.value = null },
+            )
+        }
+
+        // The calendar row only matters once a calendar trigger exists.
+        LaunchedEffect(calendarTriggers) {
+            val exist = calendarTriggers.isNotEmpty()
+            if (setupStatus.value.calendarTriggersExist != exist) {
+                setupStatus.value = setupStatus.value.copy(calendarTriggersExist = exist)
+            }
+        }
+
+        // The editor's "Next match" preview, refreshed a moment after the draft changes.
+        LaunchedEffect(calendarDraft, setupStatus.value.calendarGranted) {
+            val draft = calendarDraft ?: return@LaunchedEffect
+            delay(CALENDAR_PREVIEW_DELAY_MS)
+            nextCalendarMatch = calendarManager.nextMatch(draft)
+            if (deviceCalendars.isEmpty()) deviceCalendars = withContext(Dispatchers.IO) { calendarManager.reader.calendars() }
+        }
+
+        // The location rows only matter once a place uses GPS or Wi-Fi; the Bluetooth row once one uses a beacon.
         LaunchedEffect(locations) {
-            val exist = locations.isNotEmpty()
-            if (setupStatus.value.locationTriggersExist != exist) {
-                setupStatus.value = setupStatus.value.copy(locationTriggersExist = exist)
+            // Hearing a paired device nearby is a scan, like a beacon; being connected to it isn't.
+            val scansNearby = { place: LocationTrigger -> place.uses(PlaceSignal.BT_DEVICE) && place.btDetection == BtDetection.NEARBY }
+            val needBeacon = locations.any { it.uses(PlaceSignal.BEACON) || scansNearby(it) }
+            val needLocation = needBeacon || locations.any { it.usesGps || it.uses(PlaceSignal.WIFI) }
+            val needConnect = locations.any { it.uses(PlaceSignal.BT_DEVICE) }
+            val current = setupStatus.value
+            if (current.locationTriggersExist != needLocation || current.beaconPlacesExist != needBeacon || current.btDevicePlacesExist != needConnect) {
+                setupStatus.value = current.copy(
+                    locationTriggersExist = needLocation,
+                    beaconPlacesExist = needBeacon,
+                    btDevicePlacesExist = needConnect,
+                )
             }
         }
 
@@ -691,6 +944,7 @@ class MainActivity : ComponentActivity() {
                 Screen.ALARM_TRIGGER, Screen.ALARM_APP -> alarmDraft == null
                 Screen.DEFAULTS, Screen.DEFAULT_APPS -> defaultsDraft == null
                 Screen.LOCATION -> locationDraft == null
+                Screen.CALENDAR -> calendarDraft == null
                 else -> false
             }
             if (missingDraft) screen = Screen.HOME
@@ -790,6 +1044,14 @@ class MainActivity : ComponentActivity() {
             preciseLocationGranted = container.locationTriggerManager.hasPreciseLocation(),
             backgroundLocationGranted = container.locationTriggerManager.hasBackgroundLocation(),
             locationServicesOn = container.locationTriggerManager.locationServicesOn(),
+            calendarTriggersExist = setupStatus.value.calendarTriggersExist,
+            beaconPlacesExist = setupStatus.value.beaconPlacesExist,
+            calendarGranted = container.calendarTriggerManager.reader.hasPermission(),
+            bluetoothScanGranted = container.locationTriggerManager.beaconScanner.hasPermission(),
+            btDevicePlacesExist = setupStatus.value.btDevicePlacesExist,
+            bluetoothConnectGranted = PairedDevices.hasPermission(this),
+            nearbyScanGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || isGranted(Manifest.permission.BLUETOOTH_SCAN),
+            bluetoothAdvertiseGranted = BeaconMode.hasPermission(this),
         )
     }
 
@@ -845,6 +1107,32 @@ class MainActivity : ComponentActivity() {
         backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
     }
 
+    private fun requestBluetoothAdvertise() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            bluetoothAdvertiseLauncher.launch(Manifest.permission.BLUETOOTH_ADVERTISE)
+        } else {
+            BeaconMode.sync(this)
+        }
+    }
+
+    /** Paired devices need "Nearby devices" (connect) on Android 12+; older versions need nothing. */
+    private fun requestBluetoothConnect() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            bluetoothConnectLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            onLocationPermissionChanged()
+        }
+    }
+
+    /** Beacons need "Nearby devices" (Android 12+); older versions only need location. */
+    private fun requestBluetoothScan() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            bluetoothScanLauncher.launch(Manifest.permission.BLUETOOTH_SCAN)
+        } else {
+            requestLocationPermission()
+        }
+    }
+
     private fun onLocationPermissionChanged() {
         refreshSetupStatus()
         lifecycleScope.launch { container.locationTriggerManager.sync() }
@@ -873,6 +1161,139 @@ class MainActivity : ComponentActivity() {
                     AlarmWatchListener.component(this).flattenToString(),
                 )
         )
+    }
+
+    private fun isGranted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private val permissionActions by lazy {
+        PermissionActions(
+            onGrant = ::grantPermission,
+            onManage = ::managePermission,
+            onRevoke = ::revokePermission,
+        )
+    }
+
+    /** Settings → Permissions: each permission, what uses it, and whether the app can revoke it itself. */
+    private fun permissionRows(
+        status: SetupStatus,
+        profiles: List<LockProfile>,
+        alarmTriggers: List<AlarmTrigger>,
+        places: List<LocationTrigger>,
+        calendarTriggers: List<CalendarTrigger>,
+        quickUsesDnd: Boolean,
+        beaconMode: Boolean,
+    ): List<PermissionRow> {
+        val granted = status.grantedPermissions()
+        val everyLock = listOf(getString(R.string.perm_used_by_every_lock))
+        return AppPermission.entries.map { permission ->
+            val usedBy = when (permission) {
+                in CORE_PERMISSIONS -> everyLock
+                AppPermission.NEARBY_ADVERTISE -> if (beaconMode) listOf(getString(R.string.beacon_mode_title)) else emptyList()
+                AppPermission.CALENDAR -> calendarTriggers.map { it.name }
+                AppPermission.NOTIFICATION_ACCESS -> alarmTriggers.map { it.name }
+                AppPermission.DND_ACCESS ->
+                    listOfNotNull(getString(R.string.quick_lock).takeIf { quickUsesDnd }) +
+                        profiles.filter { PermissionNeeds.forProfile(it).isNotEmpty() }.map { it.name }
+                else -> places.filter { permission in PermissionNeeds.forPlace(it) }.map { it.name }
+            }
+            PermissionRow(permission, permission in granted, usedBy, canRevoke(permission))
+        }
+    }
+
+    private fun canRevoke(permission: AppPermission): Boolean = when (permission) {
+        AppPermission.DEVICE_ADMIN -> true
+        AppPermission.ACCESSIBILITY -> LockAccessibilityService.isRunning
+        else -> Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && runtimePermissions(permission).isNotEmpty()
+    }
+
+    /** The Android permissions behind a runtime [AppPermission]; empty for special access. */
+    private fun runtimePermissions(permission: AppPermission): List<String> = when (permission) {
+        AppPermission.NOTIFICATIONS -> listOf(Manifest.permission.POST_NOTIFICATIONS)
+        // Location without precise location would leave "all the time" behind, so they go together.
+        AppPermission.PRECISE_LOCATION -> listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+        )
+        AppPermission.BACKGROUND_LOCATION -> listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        AppPermission.NEARBY_SCAN -> listOf(Manifest.permission.BLUETOOTH_SCAN)
+        AppPermission.NEARBY_CONNECT -> listOf(Manifest.permission.BLUETOOTH_CONNECT)
+        AppPermission.NEARBY_ADVERTISE -> listOf(Manifest.permission.BLUETOOTH_ADVERTISE)
+        AppPermission.CALENDAR -> listOf(Manifest.permission.READ_CALENDAR)
+        else -> emptyList()
+    }
+
+    private fun grantPermission(permission: AppPermission) {
+        when (permission) {
+            AppPermission.DEVICE_ADMIN -> setupActions.onEnableAdmin()
+            AppPermission.NOTIFICATIONS -> setupActions.onRequestNotifications()
+            AppPermission.ACCESSIBILITY -> setupActions.onEnableAccessibility()
+            AppPermission.BATTERY -> setupActions.onAllowBackground()
+            AppPermission.EXACT_ALARMS -> setupActions.onAllowExactAlarms()
+            AppPermission.PRECISE_LOCATION -> setupActions.onGrantLocation()
+            AppPermission.BACKGROUND_LOCATION -> setupActions.onGrantBackgroundLocation()
+            AppPermission.LOCATION_SERVICES -> setupActions.onEnableLocationServices()
+            AppPermission.NEARBY_SCAN -> setupActions.onGrantBluetoothScan()
+            AppPermission.NEARBY_CONNECT -> setupActions.onGrantBluetoothConnect()
+            AppPermission.NEARBY_ADVERTISE -> requestBluetoothAdvertise()
+            AppPermission.CALENDAR -> setupActions.onGrantCalendar()
+            AppPermission.NOTIFICATION_ACCESS -> setupActions.onGrantNotificationAccess()
+            AppPermission.DND_ACCESS -> setupActions.onGrantDnd()
+        }
+    }
+
+    /** Opens Android's own page for [permission], falling back to the app's info page. */
+    private fun managePermission(permission: AppPermission) {
+        val appDetails = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
+        val intent = when (permission) {
+            AppPermission.DEVICE_ADMIN -> Intent(Settings.ACTION_SECURITY_SETTINGS)
+            AppPermission.ACCESSIBILITY -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            AppPermission.NOTIFICATIONS ->
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            AppPermission.EXACT_ALARMS -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.fromParts("package", packageName, null))
+            } else {
+                appDetails
+            }
+            AppPermission.LOCATION_SERVICES -> Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            AppPermission.NOTIFICATION_ACCESS -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, AlarmWatchListener.component(this).flattenToString())
+            AppPermission.DND_ACCESS -> Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+            // Battery and every runtime permission live on the app's info page.
+            else -> appDetails
+        }
+        runCatching { startActivity(intent) }.onFailure { startActivity(appDetails) }
+    }
+
+    /**
+     * Takes a permission back. Device admin and accessibility switch off right away. Runtime
+     * permissions are revoked by Android once the app's process ends, so the app closes itself;
+     * everything that used them shows "Paused" until they're allowed again.
+     */
+    private fun revokePermission(permission: AppPermission) {
+        when (permission) {
+            AppPermission.DEVICE_ADMIN -> {
+                container.relocker.deactivateAdmin()
+                refreshSetupStatus()
+            }
+            AppPermission.ACCESSIBILITY -> {
+                if (!LockAccessibilityService.turnOff()) managePermission(permission)
+                refreshSetupStatus()
+            }
+            else -> {
+                val permissions = runtimePermissions(permission)
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || permissions.isEmpty()) {
+                    managePermission(permission)
+                    return
+                }
+                revokeSelfPermissionsOnKill(permissions)
+                Toast.makeText(this, R.string.permission_revoke_closing, Toast.LENGTH_LONG).show()
+                finishAndRemoveTask()
+                // The revocation applies once the process ends; the app starts again on its own when needed.
+                Handler(Looper.getMainLooper()).postDelayed({ Process.killProcess(Process.myPid()) }, REVOKE_EXIT_DELAY_MS)
+            }
+        }
     }
 
     private fun openDndAccessSettings() {
@@ -937,6 +1358,12 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_OPEN_TAB = "open_tab"
+        private const val CALENDAR_PREVIEW_DELAY_MS = 400L
+        private const val BEACON_DISCOVER_MS = 15_000L
+
+        /** Lets the "closing" toast show before the app ends to apply a revoked permission. */
+        private const val REVOKE_EXIT_DELAY_MS = 800L
+        private const val BEACON_CALIBRATE_MS = 20_000L
         const val TAB_AUTOMATIONS = "automations"
 
         /** Listed first when picking an alarm app. */

@@ -83,6 +83,9 @@ interface ScheduleDao {
     @Query("SELECT * FROM schedules WHERE enabled = 1")
     suspend fun getEnabled(): List<LockSchedule>
 
+    @Query("SELECT * FROM schedules ORDER BY sortOrder, id")
+    suspend fun getAll(): List<LockSchedule>
+
     @Query("SELECT * FROM schedules WHERE id = :id")
     suspend fun getById(id: Long): LockSchedule?
 
@@ -104,6 +107,9 @@ interface LocationTriggerDao {
     @Query("SELECT * FROM location_triggers WHERE enabled = 1")
     suspend fun getEnabled(): List<LocationTrigger>
 
+    @Query("SELECT * FROM location_triggers ORDER BY sortOrder, id")
+    suspend fun getAll(): List<LocationTrigger>
+
     @Query("SELECT * FROM location_triggers WHERE id = :id")
     suspend fun getById(id: Long): LocationTrigger?
 
@@ -114,7 +120,21 @@ interface LocationTriggerDao {
     suspend fun update(trigger: LocationTrigger)
 
     @Delete
-    suspend fun delete(trigger: LocationTrigger)
+    suspend fun deleteOnly(trigger: LocationTrigger)
+
+    @Query("UPDATE schedules SET requiredPlaceId = NULL WHERE requiredPlaceId = :placeId")
+    suspend fun clearScheduleConditions(placeId: Long)
+
+    @Query("UPDATE calendar_triggers SET requiredPlaceId = NULL WHERE requiredPlaceId = :placeId")
+    suspend fun clearCalendarConditions(placeId: Long)
+
+    /** Deletes a place; schedules and calendar triggers that required it go back to "anywhere". */
+    @Transaction
+    suspend fun delete(trigger: LocationTrigger) {
+        clearScheduleConditions(trigger.id)
+        clearCalendarConditions(trigger.id)
+        deleteOnly(trigger)
+    }
 
     @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM location_triggers")
     suspend fun nextSortOrder(): Int
@@ -124,6 +144,85 @@ interface LocationTriggerDao {
     suspend fun insertLast(trigger: LocationTrigger): Long = insert(trigger.copy(sortOrder = nextSortOrder()))
 
     @Query("UPDATE location_triggers SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun setSortOrder(id: Long, sortOrder: Int)
+
+    /** Saves a new list order: [ids] from top to bottom. */
+    @Transaction
+    suspend fun reorder(ids: List<Long>) {
+        ids.forEachIndexed { index, id -> setSortOrder(id, index) }
+    }
+}
+
+/** Restore: swaps every table's rows for a backup's, in one transaction. */
+@Dao
+interface BackupDao {
+    @Query("DELETE FROM location_slots") suspend fun clearLocationSlots()
+    @Query("DELETE FROM location_triggers") suspend fun clearLocations()
+    @Query("DELETE FROM calendar_triggers") suspend fun clearCalendarTriggers()
+    @Query("DELETE FROM alarm_triggers") suspend fun clearAlarmTriggers()
+    @Query("DELETE FROM schedules") suspend fun clearSchedules()
+    @Query("DELETE FROM profiles") suspend fun clearProfiles()
+
+    @Insert suspend fun insertProfiles(items: List<LockProfile>)
+    @Insert suspend fun insertSchedules(items: List<LockSchedule>)
+    @Insert suspend fun insertAlarmTriggers(items: List<AlarmTrigger>)
+    @Insert suspend fun insertLocations(items: List<LocationTrigger>)
+    @Insert suspend fun insertLocationSlots(items: List<LocationSlot>)
+    @Insert suspend fun insertCalendarTriggers(items: List<CalendarTrigger>)
+
+    /** Children are cleared first and parents inserted first, so the foreign keys always hold. IDs are kept. */
+    @Transaction
+    suspend fun replaceAll(
+        profiles: List<LockProfile>,
+        schedules: List<LockSchedule>,
+        alarmTriggers: List<AlarmTrigger>,
+        locations: List<LocationTrigger>,
+        slots: List<LocationSlot>,
+        calendarTriggers: List<CalendarTrigger>,
+    ) {
+        clearLocationSlots()
+        clearLocations()
+        clearCalendarTriggers()
+        clearAlarmTriggers()
+        clearSchedules()
+        clearProfiles()
+        insertProfiles(profiles)
+        insertSchedules(schedules)
+        insertAlarmTriggers(alarmTriggers)
+        insertLocations(locations)
+        insertLocationSlots(slots)
+        insertCalendarTriggers(calendarTriggers)
+    }
+}
+
+@Dao
+interface CalendarTriggerDao {
+    @Query("SELECT * FROM calendar_triggers ORDER BY sortOrder, id")
+    fun observeAll(): Flow<List<CalendarTrigger>>
+
+    @Query("SELECT * FROM calendar_triggers ORDER BY sortOrder, id")
+    suspend fun getAll(): List<CalendarTrigger>
+
+    @Query("SELECT * FROM calendar_triggers WHERE enabled = 1")
+    suspend fun getEnabled(): List<CalendarTrigger>
+
+    @Insert
+    suspend fun insert(trigger: CalendarTrigger): Long
+
+    @Update
+    suspend fun update(trigger: CalendarTrigger)
+
+    @Delete
+    suspend fun delete(trigger: CalendarTrigger)
+
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM calendar_triggers")
+    suspend fun nextSortOrder(): Int
+
+    /** Inserts at the end of the list. */
+    @Transaction
+    suspend fun insertLast(trigger: CalendarTrigger): Long = insert(trigger.copy(sortOrder = nextSortOrder()))
+
+    @Query("UPDATE calendar_triggers SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun setSortOrder(id: Long, sortOrder: Int)
 
     /** Saves a new list order: [ids] from top to bottom. */
@@ -207,8 +306,8 @@ class Converters {
 
 /** See ADR 0003: kept in device-protected storage so receivers can read it before the first unlock. */
 @Database(
-    entities = [LockProfile::class, LockSchedule::class, AlarmTrigger::class, LocationTrigger::class, LocationSlot::class],
-    version = 11,
+    entities = [LockProfile::class, LockSchedule::class, AlarmTrigger::class, LocationTrigger::class, LocationSlot::class, CalendarTrigger::class],
+    version = 14,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -218,6 +317,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun alarmTriggerDao(): AlarmTriggerDao
     abstract fun locationTriggerDao(): LocationTriggerDao
     abstract fun locationSlotDao(): LocationSlotDao
+    abstract fun calendarTriggerDao(): CalendarTriggerDao
+    abstract fun backupDao(): BackupDao
 
     companion object {
         private const val NAME = "lockmyphone.db"
@@ -227,7 +328,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.createDeviceProtectedStorageContext(),
                 AppDatabase::class.java,
                 NAME,
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11).build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).build()
 
         /** v2: profiles gain a Do Not Disturb switch (off for existing profiles). */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -334,6 +435,66 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_location_slots_locationId` ON `location_slots` (`locationId`)")
             }
         }
+
+        /** v12: calendar triggers. */
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(CREATE_CALENDAR_TRIGGERS)
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_calendar_triggers_profileId` ON `calendar_triggers` (`profileId`)")
+            }
+        }
+
+        /**
+         * v13: places decide "here" from any mix of signals (GPS, Wi-Fi, beacon, charger), and
+         * schedules / calendar triggers can require a place. The old matchMode becomes signals.
+         */
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN signals TEXT NOT NULL DEFAULT 'GPS'")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN requireAll INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconKey TEXT")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconName TEXT")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconRssiThreshold INTEGER NOT NULL DEFAULT -75")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN chargerMode TEXT NOT NULL DEFAULT 'ANY'")
+                db.execSQL(
+                    "UPDATE location_triggers SET " +
+                        "signals = CASE matchMode WHEN 'WIFI_ONLY' THEN 'WIFI' " +
+                        "WHEN 'GPS_AND_WIFI' THEN 'GPS|WIFI' WHEN 'GPS_OR_WIFI' THEN 'GPS|WIFI' ELSE 'GPS' END, " +
+                        "requireAll = CASE matchMode WHEN 'GPS_OR_WIFI' THEN 0 ELSE 1 END"
+                )
+                db.execSQL("ALTER TABLE schedules ADD COLUMN requiredPlaceId INTEGER")
+                db.execSQL("ALTER TABLE calendar_triggers ADD COLUMN requiredPlaceId INTEGER")
+            }
+        }
+
+        /** v14: a paired Bluetooth device as a place signal (connected to it, or near it). */
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN btAddress TEXT")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN btName TEXT")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN btDetection TEXT NOT NULL DEFAULT 'CONNECTED'")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN btRssiThreshold INTEGER NOT NULL DEFAULT -75")
+            }
+        }
+
+        /** Copied from Room's generated schema, so the migrated table matches a fresh install. */
+        private const val CREATE_CALENDAR_TRIGGERS =
+            "CREATE TABLE IF NOT EXISTS `calendar_triggers` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`name` TEXT NOT NULL, " +
+                "`icon` TEXT, " +
+                "`enabled` INTEGER NOT NULL, " +
+                "`sortOrder` INTEGER NOT NULL, " +
+                "`calendarIds` TEXT NOT NULL, " +
+                "`keywords` TEXT NOT NULL, " +
+                "`searchNotesAndLocation` INTEGER NOT NULL, " +
+                "`includeAllDay` INTEGER NOT NULL, " +
+                "`skipDeclined` INTEGER NOT NULL, " +
+                "`skipFree` INTEGER NOT NULL, " +
+                "`lengthMode` TEXT NOT NULL, " +
+                "`fixedDurationSec` INTEGER NOT NULL, " +
+                "`startEarlyMinutes` INTEGER NOT NULL, " +
+                "`profileId` INTEGER, " +
+                "FOREIGN KEY(`profileId`) REFERENCES `profiles`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )"
 
         /** Copied from Room's generated schema, so the migrated table matches a fresh install. */
         private const val CREATE_LOCATION_SLOTS =

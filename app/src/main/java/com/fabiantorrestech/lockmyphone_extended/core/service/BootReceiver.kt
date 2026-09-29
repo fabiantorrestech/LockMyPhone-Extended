@@ -26,6 +26,8 @@ class BootReceiver : BroadcastReceiver() {
             // the location triggers read credential-protected settings.
             if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
                 container.locationTriggerManager.sync()
+                container.calendarTriggerManager.sync()
+                BeaconMode.sync(context)
             }
         }
     }

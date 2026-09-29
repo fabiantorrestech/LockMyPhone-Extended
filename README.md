@@ -27,7 +27,7 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
 
 ### The lock
 - **Locks again on every unlock** during a lock, like Lock My Phone. The lock survives reboots and app updates, because the end time is stored as a wall-clock timestamp.
-- **Quick lock:** set the length (H:M:S or one-tap presets), allowed apps and options on the Quick lock tab, then tap **Lock now**. Everything is remembered for next time. ↻ copies your Lock defaults back in.
+- **Quick lock:** set the length (H:M:S or one-tap presets), allowed apps and options on the Quick lock tab, then tap **▶ Start** at the top. Everything is remembered for next time. ↻ copies your Lock defaults back in.
 - **Profiles:** named, reusable locks, each with an icon (built-in icons or any emoji). You can drag them to reorder, and start one with ▶ (the length can be adjusted before starting).
 - **Lock defaults:** a baseline that new profiles start from, and that Quick lock can copy.
 - **Countdown screen:** while locked, the app shows only the time left and the end time, so settings can't be changed mid-lock.
@@ -48,15 +48,39 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
   - **Timers never count.**
   - **Active on:** every day, chosen weekdays, once, or specific dates. A configurable "day starts at" time (default 2:00 AM) decides which day a late-night alarm belongs to.
   - **Missing alarms:** a warning if a learned alarm seems to have been deleted, with a one-tap **Re-link** when a re-created one is spotted.
-- **Location triggers:**
-  - The place is a GPS circle (25–2000 m) and/or a specific Wi-Fi router (its unique BSSID, which is exact to a building or room).
-  - **How to match:** GPS only · Wi-Fi only · GPS **and** Wi-Fi · GPS **or** Wi-Fi.
-  - **Behaviours:** lock *while I'm here*, *on arrival*, *when I leave*, or **during time slots**:
+- **Places (location triggers):**
+  - **A place is recognised by any mix of signals:**
+    - a GPS circle (25–2000 m)
+    - a specific Wi-Fi router (its unique BSSID, exact to a building or room)
+    - a **Bluetooth beacon** (an ESP32, a coin-cell iBeacon/Eddystone, or a tablet in beacon mode; about 1–3 m, calibrated at your spot)
+    - a **paired Bluetooth device**, with no app on it: *when connected* (car, speaker, headphones, watch, keyboard; exact, no scanning) or *when nearby* (experimental; works with some watches and earbuds, and the picker shows whether yours does)
+    - being **on a charger** (any, or wireless only, e.g. the pad on your desk)
+  - **Combine them:** *all of them* (the strictest) or *any one of them* (the most reliable).
+  - **Behaviours:** lock *while I'm here*, *on arrival*, *when I leave*, **during time slots**, or **only as a condition** for other automations:
     - several slots per place, each with its own days
     - you choose whether to lock again when you come back mid-slot
     - you choose whether leaving unlocks or keeps the lock until the slot ends
   - **Engine:** Google Play Services geofencing (default) or Android's built-in location (no Google needed).
+  - **"Only while at ‹place›":** schedules and calendar triggers can require a place. They lock only while you're there; arriving mid-window starts the lock, and it lasts until the window ends.
+  - **Act as a beacon:** turn a tablet or spare phone into a beacon (always, or during set hours), so "near my tablet" works as a portable desk in cafés and libraries. It runs as a quiet foreground service; allow unrestricted battery on Samsung, Nothing and similar phones.
+  - Build your own desk beacon: [doc/esp32-beacon.md](doc/esp32-beacon.md).
+- **Calendar triggers:** lock during calendar events.
+  - Match by chosen calendars and/or keywords in the title (optionally also notes and location). All-day events are optional.
+  - The lock lasts until the event ends, or for a set length from its start, with an optional early start.
+  - Declined and "free" events can be skipped; the defaults are in Settings.
+  - Recurring events work. Moved or deleted events are picked up automatically, and a live "Next match" preview shows what would lock.
 - **Intent API:** start or stop locks from MacroDroid, Tasker and similar apps (see [below](#intent-api-macrodroid-tasker)).
+
+### Backup
+- **Back up now / Restore:** everything (settings, Lock defaults, Quick lock, profiles, schedules, alarm, location and calendar triggers) as one JSON file, in a folder you pick (e.g. one synced to Google Drive).
+- **Restore replaces everything,** after a confirmation that lists what may need attention on a new phone. The intent-API stop token is never included.
+- **Auto backup:** 10 minutes after your last change, then idle until the next change. Keeps the last 10, in the backup folder or a folder of its own.
+- **Not included:** the stop token, and *Act as a beacon* (each device keeps its own beacon ID).
+
+### Permissions
+- **Settings → Permissions** lists every permission, allowed or not, why it's needed and what uses it, with **Allow**, **Manage** (Android's own page) and **Revoke**.
+- **Revoke** works in-app for device admin, accessibility and, on Android 13+, runtime permissions such as location, calendar and nearby devices (the app closes so Android can apply it). The rest open the right settings page.
+- Nothing is deleted: places and triggers that need a missing permission show **⏸ Paused: needs …** and work again once it's allowed.
 
 ### Quality of life
 - **Tabs:** Quick lock · Profiles · Automations · Settings, in a bottom bar.
@@ -91,7 +115,9 @@ The checklist on the **Settings** tab only shows what's still missing:
 | **Run in background** (battery unrestricted) | Keeps enforcement reliable, especially on Samsung and Nothing phones. |
 | **Do Not Disturb access** | Only if a lock uses DND or grayscale. |
 | **Notification access** | Only if you use alarm triggers (to see alarms ringing). |
-| **Precise location + "Allow all the time"** | Only if you use location triggers. |
+| **Precise location + "Allow all the time"** | Only if you use location triggers (Android also requires it for Bluetooth beacons). |
+| **Nearby devices** | Only if a place uses a Bluetooth beacon or a paired device, or this device acts as a beacon. |
+| **Calendar** (read-only) | Only if you use calendar triggers. |
 
 ---
 
@@ -103,9 +129,17 @@ The checklist on the **Settings** tab only shows what's still missing:
 - **Focus at the office:** a location with *During time slots* Mon–Fri 9:00–12:00 and 13:00–17:00, matched by *GPS or Wi-Fi* (the office router makes it exact indoors).
   - Choose whether stepping out for lunch unlocks or keeps you locked until the slot ends.
 - **Gym:** a location with *While I'm here*, allowing only your music app and the timer.
+- **"Only when I sit at my desk":** an ESP32 beacon on the desk → a place with the beacon signal and *During time slots* Mon–Fri 9:00–17:00. Sit down and it locks after about 45 s.
+- **Portable desk:** turn on *Act as a beacon* on your tablet. A place with that beacon → the phone locks whenever you work next to the tablet, at home, a café or the library.
+- **Phone on the pad = phone away:** a place with *Wireless charger only* and *While I'm here*. Lifting the phone ends the lock.
+- **Study schedule, but only at home:** a schedule Mon–Fri 19:00–21:00 with *Only while at: Home*. Out that evening? No lock. Home at 19:40? It locks until 21:00.
 - **From another app:** a MacroDroid macro sends `START_LOCK` with `profile=Study` when you connect to a certain Bluetooth device.
-- **A quick 25-minute focus burst:** Quick lock → tap the 30m preset (or your own) → Lock now.
+- **A quick 25-minute focus burst:** Quick lock → tap the 30m preset (or your own) → ▶ Start.
 - **Commute:** a location on your home Wi-Fi with *When I leave* → a 45-minute lock.
+- **Deep work from your calendar:** a calendar trigger on keyword "Focus" in your Work calendar → locks for exactly the length of each focus block.
+- **New phone:** Settings → Backup → Restore from a file… (the backup can come from a Drive-synced folder). Then:
+  - re-grant the permissions
+  - re-pick your QRAlarm alarms, whose internal numbers are per phone
 
 ---
 
@@ -128,9 +162,10 @@ com.fabiantorrestech.lockmyphone_extended
 ├── trigger
 │   ├── schedule  ScheduleCalculator (pure) + exact-alarm scheduler
 │   ├── alarm     NotificationListener, learning, first-alarm + day rules, health checks
-│   ├── location  LocationRules (pure), Play Services / built-in engines, receiver, manager
+│   ├── location  LocationRules + BeaconRules (pure), Play Services / built-in engines, BLE scanner, charger job, receiver, manager
+│   ├── calendar  CalendarRules (pure), CalendarContract reader, alarm + content-change job
 │   ├── IntentApiReceiver, ProfileLockStarter
-├── data          SettingsStore, Room database (profiles, schedules, alarm & location triggers, slots)
+├── data          SettingsStore, Room database (profiles, schedules, alarm/location/calendar triggers, slots), backup
 └── ui            Compose screens, SettingsKit (editor building blocks), reorderable lists
 ```
 
@@ -152,7 +187,8 @@ flowchart LR
 
 - **The unlock rule:** every unlock (`USER_PRESENT`) during a lock without an active pass → `lockNow()` after a 1-second grace. The grace lets a lock-screen shortcut grant a pass first.
 - **Passes:** a pass lets allowed apps be in front. Anything else, including the launcher (home, app switcher), locks again. Screen-off pauses the pass; unlocking resumes it only if an allowed app is still in front.
-- **Rules are pure Kotlin:** `LockEngine`, `ScheduleCalculator`, `AlarmDayRules`, `AlarmKinds` and `LocationRules` have no Android dependencies.
+- **Rules are pure Kotlin:** `LockEngine`, `ScheduleCalculator`, `AlarmDayRules`, `AlarmKinds`, `LocationRules`, `BeaconRules` and `CalendarRules` have no Android dependencies.
+- **Presence without polling:** Bluetooth beacons are watched with a filtered background scan that wakes the app via a PendingIntent. Charging wakes it via a JobScheduler job; Wi-Fi via a network callback.
 - **Direct boot:** the lock state and the database live in **device-protected storage**, so a scheduled or active lock is enforced even before the first unlock after a reboot.
 
 ### Architecture decisions
@@ -219,7 +255,19 @@ No. Timers and stopwatches never count as alarms, and learning refuses a timer.
 **How exact are location triggers?**
 - **GPS:** usually 5–20 m outdoors, but it can drift 30–100 m indoors. That's why leaving counts only once you're clearly past the edge, by at least 20 m or the reading's accuracy if that's bigger.
 - **Wi-Fi rule:** exact to the router's building or room.
-- **Match modes:** *GPS or Wi-Fi* is the most reliable indoors; *GPS and Wi-Fi* is the strictest.
+- **Combining signals:** *any one of them* is the most reliable indoors; *all of them* is the strictest.
+- **Bluetooth beacon:** about 1–3 m after calibration. You count as here after about 45 s near it, and as gone after about 2 min without it.
+
+**Can my phone measure the distance to a beacon?**
+Not exactly. Phones measure signal strength, which changes with walls, bodies and how you hold the phone. The app smooths it and uses a threshold calibrated at your spot, which reliably tells "at my desk" from "across the room".
+
+**Does the other device need this app?**
+- **Beacons** (ESP32, coin-cell iBeacon/Eddystone): no.
+- **Paired devices** (car, speaker, headphones, watch, keyboard): no. Use the *Paired Bluetooth device* signal, set to *when connected*.
+- **Another phone or tablet as a beacon:** yes, with *Act as a beacon* on. Phones change their Bluetooth address every few minutes for privacy, so without a fixed broadcast they can't be recognised.
+
+**What if I don't want to allow location?**
+GPS, Wi-Fi and beacon places need it (Android counts Bluetooth scanning as location). Charger places and paired devices *when connected* don't. Revoke it in Settings → Permissions; the places that need it show "Paused".
 
 **Does location use a lot of battery?**
 - **Play Services (default):** battery-friendly geofences. Small circles are double-checked about every 2 minutes, only while you're near the place.
@@ -228,6 +276,20 @@ No. Timers and stopwatches never count as alarms, and learning refuses a timer.
 **Grayscale didn't turn on.**
 - It needs **Android 15+** and **Do Not Disturb access**.
 - The mode ("LockMyPhone grayscale") appears in Settings → Modes, where you can check it.
+
+**What's in a backup, and what isn't?**
+- **In it:**
+  - all settings
+  - Lock defaults and Quick lock
+  - profiles and schedules
+  - alarm, location and calendar triggers
+- **Not in it:**
+  - the intent-API stop token
+  - granted permissions
+  - the lock that's running right now
+- **Restoring on another phone:**
+  - Calendar triggers find calendars by account + name.
+  - Learned alarms may need re-picking, because QRAlarm's internal numbers belong to the phone they were learned on.
 
 **What happens after a reboot during a lock?**
 The lock resumes, because it's stored in device-protected storage and the end time is absolute. Location watching is re-registered after boot.
@@ -266,5 +328,7 @@ Requirements: Android Studio (2026.1 or newer; uses its bundled JDK), Android SD
 | Schedules, intent API, early unlock, DND (priority) | ✅ Tested (emulator) |
 | App lists, fast scroll, QRAlarm upcoming picker | ✅ Tested (Pixel 7) |
 | Alarm triggers (Google Clock) | ✅ Tested (emulator) |
-| Resume after screen-off, Lock defaults, DND levels, grayscale, presets, editor redesign, icons, reordering, first-alarm + day rules, timer exclusion, missing-alarm warnings, location triggers + time slots, release build | 🟡 Built, not yet tested on a device |
+| Resume after screen-off, Lock defaults, DND levels, grayscale, presets, editor redesign, icons, reordering, first-alarm + day rules, timer exclusion, missing-alarm warnings, location triggers + time slots, calendar triggers, backup/restore + auto backup, release build | 🟡 Built, not yet tested on a device |
+| Beacon + charger places, "Only while at", act as a beacon | 🟡 Built, not yet tested on a device |
+| Paired Bluetooth devices (connected / nearby), Permissions page with revoke | 🟡 Built, not yet tested on a device |
 | NFC tags + gate screen, emergency mode | ⬜ Not built yet |

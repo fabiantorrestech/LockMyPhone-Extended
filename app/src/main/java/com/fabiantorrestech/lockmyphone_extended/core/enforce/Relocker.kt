@@ -12,6 +12,11 @@ class Relocker(context: Context) {
 
     fun isAdminActive(): Boolean = devicePolicyManager.isAdminActive(adminComponent)
 
+    /** Settings → Permissions → Revoke. Locks can't be enforced until it's turned on again. */
+    fun deactivateAdmin() {
+        if (isAdminActive()) devicePolicyManager.removeActiveAdmin(adminComponent)
+    }
+
     fun lockNow() {
         if (isAdminActive()) devicePolicyManager.lockNow()
     }

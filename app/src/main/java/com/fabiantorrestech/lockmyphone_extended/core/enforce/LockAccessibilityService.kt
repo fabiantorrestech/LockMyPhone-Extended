@@ -15,6 +15,7 @@ class LockAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        instance = this
         isRunning = true
         LockApp.container(this).lockController.updateNotifications()
     }
@@ -28,6 +29,7 @@ class LockAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onUnbind(intent: Intent?): Boolean {
+        instance = null
         isRunning = false
         LockApp.container(this).lockController.updateNotifications()
         return super.onUnbind(intent)
@@ -38,6 +40,16 @@ class LockAccessibilityService : AccessibilityService() {
         @Volatile
         var isRunning: Boolean = false
             private set
+
+        @Volatile
+        private var instance: LockAccessibilityService? = null
+
+        /** Settings → Permissions → Revoke: the service turns itself off. False if it isn't running. */
+        fun turnOff(): Boolean {
+            val service = instance ?: return false
+            service.disableSelf()
+            return true
+        }
 
         /** Whether the user has enabled the service in Settings, even if it isn't bound yet. */
         fun isEnabledInSettings(context: Context): Boolean {

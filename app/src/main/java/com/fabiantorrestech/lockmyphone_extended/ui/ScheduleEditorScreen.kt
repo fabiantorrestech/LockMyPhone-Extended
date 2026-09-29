@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.fabiantorrestech.lockmyphone_extended.R
+import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockSchedule
 import java.time.DayOfWeek
@@ -34,6 +35,7 @@ import java.util.Locale
 fun ScheduleEditorScreen(
     draft: LockSchedule,
     profiles: List<LockProfile>,
+    places: List<LocationTrigger>,
     onDraftChange: (LockSchedule) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
@@ -80,6 +82,10 @@ fun ScheduleEditorScreen(
                 checked = draft.enabled,
                 onCheckedChange = { onDraftChange(draft.copy(enabled = it)) },
             )
+        }
+
+        SettingsSection(stringResource(R.string.section_where)) {
+            OnlyWhileAtRow(places, draft.requiredPlaceId) { onDraftChange(draft.copy(requiredPlaceId = it)) }
         }
 
         SettingsSection(stringResource(R.string.section_when)) {

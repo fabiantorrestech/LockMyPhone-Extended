@@ -24,6 +24,16 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Calendar triggers: read events (never written). -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Beacon places (scan) and "Act as a beacon" (advertise). Beacons need location results, so no neverForLocation. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <!-- Paired devices as places: list them, and hear when they connect or disconnect. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <!-- Android 11+ package visibility: list launchable apps, find the dialer, launcher and keyboards. -->
     <queries>
@@ -129,6 +139,43 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <service
+            android:name=".trigger.location.ChargingJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
+            android:name=".core.service.BeaconAdvertiserService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <receiver
+            android:name=".core.service.BeaconModeReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".trigger.location.BtConnectionReceiver"
+            android:directBootAware="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".data.backup.AutoBackupReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".trigger.calendar.CalendarReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".trigger.calendar.CalendarChangeJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <receiver
             android:name=".trigger.location.LocationReceiver"

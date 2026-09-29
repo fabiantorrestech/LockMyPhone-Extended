@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Place
+import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -86,6 +88,36 @@ fun ActiveOnSection(
                 addingDate = false
             },
             onDismiss = { addingDate = false },
+        )
+    }
+}
+
+/**
+ * "Only while at": pick a place (or anywhere). The lock then starts only while you're there;
+ * arriving mid-window starts it.
+ */
+@Composable
+fun OnlyWhileAtRow(places: List<LocationTrigger>, requiredPlaceId: Long?, onChange: (Long?) -> Unit) {
+    var picking by remember { mutableStateOf(false) }
+    val place = places.firstOrNull { it.id == requiredPlaceId }
+    SettingsRow(
+        icon = Icons.Filled.Place,
+        title = stringResource(R.string.only_while_at),
+        summary = place?.name ?: stringResource(R.string.only_while_at_anywhere),
+        onClick = { picking = true },
+    )
+    if (picking) {
+        ChoiceDialog(
+            title = stringResource(R.string.only_while_at),
+            options = listOf<Long?>(null) + places.map { it.id },
+            selected = requiredPlaceId,
+            label = { id -> places.firstOrNull { it.id == id }?.name ?: stringResource(R.string.only_while_at_anywhere) },
+            footer = stringResource(R.string.only_while_at_hint),
+            onSelect = {
+                onChange(it)
+                picking = false
+            },
+            onDismiss = { picking = false },
         )
     }
 }

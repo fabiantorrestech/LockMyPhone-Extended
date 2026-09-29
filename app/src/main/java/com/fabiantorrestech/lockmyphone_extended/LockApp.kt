@@ -3,6 +3,7 @@ package com.fabiantorrestech.lockmyphone_extended
 import android.app.Application
 import android.content.Context
 import android.os.UserManager
+import com.fabiantorrestech.lockmyphone_extended.core.service.BeaconMode
 import kotlinx.coroutines.launch
 
 class LockApp : Application() {
@@ -23,6 +24,9 @@ class LockApp : Application() {
         // Location triggers read credential-protected settings, so only once the user has unlocked.
         if (getSystemService(UserManager::class.java).isUserUnlocked) {
             container.appScope.launch { container.locationTriggerManager.sync() }
+            container.appScope.launch { container.calendarTriggerManager.sync() }
+            container.backupManager.watchForChanges()
+            BeaconMode.sync(this)
         }
     }
 

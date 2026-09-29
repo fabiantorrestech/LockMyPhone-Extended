@@ -1,6 +1,7 @@
 package com.fabiantorrestech.lockmyphone_extended.trigger.location
 
-import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMatch
+import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
+import com.fabiantorrestech.lockmyphone_extended.data.db.ChargerMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import kotlin.math.asin
 import kotlin.math.cos
@@ -14,6 +15,28 @@ enum class Presence { INSIDE, OUTSIDE, UNKNOWN }
 
 /** Crossing into or out of a place. */
 enum class Transition { ENTER, EXIT }
+
+/** Whether the phone is charging, and whether wirelessly. */
+data class ChargerReading(val pluggedIn: Boolean, val wireless: Boolean)
+
+/**
+ * Everything the signals are read from at one moment.
+ *
+ * @param wifiKnown false when the Wi-Fi network can't be read (no location permission, or
+ *   location services off): then Wi-Fi says nothing, rather than "not connected".
+ * @param beacon whether a beacon place's beacon is near right now.
+ * @param btConnected whether the paired device with this address is connected.
+ * @param btNearby whether a place's paired device is heard nearby.
+ */
+data class Readings(
+    val fix: Fix?,
+    val wifiBssid: String?,
+    val wifiKnown: Boolean = true,
+    val charger: ChargerReading?,
+    val beacon: (LocationTrigger) -> Presence,
+    val btConnected: (String) -> Presence = { Presence.UNKNOWN },
+    val btNearby: (LocationTrigger) -> Presence = { Presence.UNKNOWN },
+)
 
 /** A location fix: where, and how sure (the radius of 68% confidence, in meters). */
 data class Fix(val latitude: Double, val longitude: Double, val accuracyMeters: Float)
@@ -35,16 +58,38 @@ object LocationRules {
     private const val MIN_ACCURACY_ALLOWANCE_METERS = 50f
     private const val EXIT_MARGIN_METERS = 20f
 
-    fun presence(trigger: LocationTrigger, fix: Fix?, connectedBssid: String?): Presence {
-        val bssid = trigger.wifiBssid ?: return gpsPresence(trigger, fix)
-        // A router's BSSID is unique and its range is a building.
-        val wifi = if (bssid.equals(connectedBssid, ignoreCase = true)) Presence.INSIDE else Presence.OUTSIDE
-        return when (trigger.matchMode) {
-            LocationMatch.GPS_ONLY -> gpsPresence(trigger, fix)
-            LocationMatch.WIFI_ONLY -> wifi
-            LocationMatch.GPS_AND_WIFI -> both(gpsPresence(trigger, fix), wifi)
-            LocationMatch.GPS_OR_WIFI -> either(gpsPresence(trigger, fix), wifi)
+    /**
+     * Combines the place's signals: all of them must say "here" ([LocationTrigger.requireAll]),
+     * or any one is enough.
+     */
+    fun presence(trigger: LocationTrigger, readings: Readings): Presence {
+        val results = buildList {
+            if (trigger.usesGps) add(gpsPresence(trigger, readings.fix))
+            // A router's BSSID is unique and its range is a building.
+            if (trigger.usesWifi) {
+                add(
+                    when {
+                        !readings.wifiKnown -> Presence.UNKNOWN
+                        trigger.wifiBssid.equals(readings.wifiBssid, ignoreCase = true) -> Presence.INSIDE
+                        else -> Presence.OUTSIDE
+                    }
+                )
+            }
+            if (trigger.usesBeacon) add(readings.beacon(trigger))
+            trigger.btAddress?.takeIf { trigger.usesBtDevice }?.let { address ->
+                add(if (trigger.btDetection == BtDetection.CONNECTED) readings.btConnected(address) else readings.btNearby(trigger))
+            }
+            if (trigger.usesCharger) add(chargerPresence(trigger, readings.charger))
         }
+        if (results.isEmpty()) return Presence.UNKNOWN
+        return results.reduce(if (trigger.requireAll) ::both else ::either)
+    }
+
+    private fun chargerPresence(trigger: LocationTrigger, charger: ChargerReading?): Presence = when {
+        charger == null -> Presence.UNKNOWN
+        !charger.pluggedIn -> Presence.OUTSIDE
+        trigger.chargerMode == ChargerMode.WIRELESS && !charger.wireless -> Presence.OUTSIDE
+        else -> Presence.INSIDE
     }
 
     /** Inside only if both say so; outside as soon as either says so. */

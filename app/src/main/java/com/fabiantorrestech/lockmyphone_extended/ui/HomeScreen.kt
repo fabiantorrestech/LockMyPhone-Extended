@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,6 +31,16 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import com.fabiantorrestech.lockmyphone_extended.data.MAX_DURATION_PRESETS
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
+import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
+import androidx.compose.material.icons.filled.EventAvailable
+import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.BluetoothAudio
+import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderSpecial
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.EventBusy
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationEngineChoice
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
@@ -70,6 +82,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.fabiantorrestech.lockmyphone_extended.R
+import com.fabiantorrestech.lockmyphone_extended.core.perm.AppPermission
+import com.fabiantorrestech.lockmyphone_extended.core.perm.PermissionNeeds
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 import com.fabiantorrestech.lockmyphone_extended.data.BypassDefaults
@@ -107,6 +121,15 @@ fun HomeScreen(
     onEditAlarmTrigger: (AlarmTrigger?) -> Unit,
     locations: List<LocationTrigger>,
     onEditLocation: (LocationTrigger?) -> Unit,
+    calendarTriggers: List<CalendarTrigger>,
+    onEditCalendar: (CalendarTrigger?) -> Unit,
+    calendarSkipDeclined: Boolean,
+    calendarSkipFree: Boolean,
+    onCalendarDefaultsChange: (skipDeclined: Boolean, skipFree: Boolean) -> Unit,
+    backup: BackupUiState,
+    backupActions: BackupActions,
+    beaconMode: BeaconModeUiState,
+    onBeaconModeChange: (enabled: Boolean, startMinutes: Int?, endMinutes: Int?) -> Unit,
     locationEngine: LocationEngineChoice,
     playServicesAvailable: Boolean,
     onLocationEngineChange: (LocationEngineChoice) -> Unit,
@@ -117,6 +140,7 @@ fun HomeScreen(
     intentApiActions: IntentApiActions,
     onOpenDiagnostics: () -> Unit,
     onOpenLockDefaults: () -> Unit,
+    onOpenPermissions: () -> Unit,
     quickLock: LockSettings,
     startActions: StartLockActions,
     presetsSec: List<Long>,
@@ -135,6 +159,8 @@ fun HomeScreen(
             // The activity's Scaffold already pads for the status bar.
             windowInsets = WindowInsets(0),
         )
+        // What's allowed right now, so list rows can say what's paused.
+        val granted = setup.grantedPermissions()
         // Each tab keeps its own scroll position while you switch between them.
         val scrollStates = HomeTab.entries.associateWith { rememberScrollState() }
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -157,7 +183,7 @@ fun HomeScreen(
                         }
                         ProfilesCard(
                             profiles, setup.accessibilityEnabled, setup.adminActive, onEditProfile,
-                            startActions.onStartProfile, reorderActions.onReorderProfiles, presetsSec,
+                            startActions.onStartProfile, reorderActions.onReorderProfiles, presetsSec, granted,
                         )
                         // Room below the last profile, so the + button never covers its Start button.
                         Spacer(Modifier.height(FAB_CLEARANCE))
@@ -172,15 +198,20 @@ fun HomeScreen(
                         }
                         alarmProblems.forEach { problem -> AlarmProblemBanner(problem, alarmProblemActions) }
                         SchedulesCard(schedules, profiles, onEditSchedule, reorderActions.onReorderSchedules)
-                        AlarmTriggersCard(alarmTriggers, profiles, appLabel, onEditAlarmTrigger, reorderActions.onReorderTriggers)
-                        LocationsCard(locations, profiles, onEditLocation, reorderActions.onReorderLocations)
+                        AlarmTriggersCard(alarmTriggers, profiles, appLabel, onEditAlarmTrigger, reorderActions.onReorderTriggers, granted)
+                        LocationsCard(locations, profiles, onEditLocation, reorderActions.onReorderLocations, granted)
+                        CalendarCard(calendarTriggers, profiles, onEditCalendar, reorderActions.onReorderCalendars, granted)
                     }
                     HomeTab.SETTINGS -> {
                         SetupChecklist(setup, setupActions)
+                        PermissionsCard(onOpenPermissions)
                         LockDefaultsCard(onOpenLockDefaults)
+                        BackupCard(backup, backupActions)
                         LengthPresetsCard(presetsSec, onPresetsChange)
                         AlarmDayStartCard(alarmDayStartMinutes, onAlarmDayStartChange)
                         LocationEngineCard(locationEngine, playServicesAvailable, onLocationEngineChange)
+                        BeaconModeCard(beaconMode, onBeaconModeChange, setupActions.onAllowBackground)
+                        CalendarDefaultsCard(calendarSkipDeclined, calendarSkipFree, onCalendarDefaultsChange)
                         IntentApiCard(intentApi, intentApiActions)
                         DeviceCard(deviceProfileName, onChangeDevice)
                         AppearanceCard(themeMode, onThemeModeChange, showPickerIcons, onShowPickerIconsChange)
@@ -235,6 +266,7 @@ private fun LocationsCard(
     profiles: List<LockProfile>,
     onEdit: (LocationTrigger?) -> Unit,
     onReorder: (List<LocationTrigger>) -> Unit,
+    granted: Set<AppPermission>,
 ) {
     val context = LocalContext.current
     val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -248,7 +280,10 @@ private fun LocationsCard(
                 val profile = location.profileId?.let { profilesById[it] }
                 ListRow(
                     title = location.name,
-                    subtitle = formatLocationTrigger(context, location, profile?.name),
+                    subtitle = withPauseNote(
+                        formatLocationTrigger(context, location, profile?.name),
+                        pauseNote(context, PermissionNeeds.checkPlace(location, granted)),
+                    ),
                     onClick = { onEdit(location) },
                     leading = { ProfileIcon(automationIcon(location.icon, profile), location.name) },
                 )
@@ -256,6 +291,229 @@ private fun LocationsCard(
             OutlinedButton(onClick = { onEdit(null) }, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.location_new))
             }
+        }
+    }
+}
+
+/** The backup settings as shown. */
+data class BackupUiState(
+    val folderName: String?,
+    /** Null = same as the backup folder. */
+    val autoFolderName: String?,
+    val autoBackup: Boolean,
+    val lastBackupAtMs: Long?,
+)
+
+class BackupActions(
+    val onPickFolder: () -> Unit,
+    val onPickAutoFolder: () -> Unit,
+    val onBackupNow: () -> Unit,
+    val onRestore: () -> Unit,
+    val onAutoBackupChange: (Boolean) -> Unit,
+)
+
+/** Settings → Backup: folder, back up now, restore, auto backup. */
+@Composable
+private fun BackupCard(state: BackupUiState, actions: BackupActions) {
+    val hasFolder = state.folderName != null
+    val hasAutoFolder = state.autoFolderName != null || hasFolder
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Text(
+                stringResource(R.string.backup_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            SettingsRow(
+                icon = Icons.Filled.Folder,
+                title = stringResource(R.string.backup_folder),
+                summary = state.folderName ?: stringResource(R.string.backup_folder_none),
+                onClick = actions.onPickFolder,
+            )
+            SettingsRow(
+                icon = Icons.Filled.Backup,
+                title = stringResource(R.string.backup_now),
+                summary = state.lastBackupAtMs?.let {
+                    stringResource(R.string.backup_last, formatDateTime(it))
+                } ?: stringResource(R.string.backup_never),
+                onClick = actions.onBackupNow,
+                enabled = hasFolder,
+            )
+            SettingsRow(
+                icon = Icons.Filled.Restore,
+                title = stringResource(R.string.backup_restore),
+                summary = stringResource(R.string.backup_restore_hint),
+                onClick = actions.onRestore,
+            )
+            SwitchSettingsRow(
+                icon = Icons.Filled.Autorenew,
+                title = stringResource(R.string.backup_auto),
+                summary = stringResource(if (hasAutoFolder) R.string.backup_auto_hint else R.string.backup_auto_needs_folder),
+                checked = state.autoBackup && hasAutoFolder,
+                onCheckedChange = actions.onAutoBackupChange,
+                enabled = hasAutoFolder,
+            )
+            SettingsRow(
+                icon = Icons.Filled.FolderSpecial,
+                title = stringResource(R.string.backup_auto_folder),
+                summary = state.autoFolderName ?: stringResource(R.string.backup_auto_folder_same),
+                onClick = actions.onPickAutoFolder,
+            )
+        }
+    }
+}
+
+/** "Sep 29, 2026, 10:30 AM" in the user's locale. */
+private fun formatDateTime(timeMs: Long): String =
+    java.time.Instant.ofEpochMilli(timeMs).atZone(java.time.ZoneId.systemDefault())
+        .format(java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.MEDIUM, java.time.format.FormatStyle.SHORT))
+
+/** "Act as a beacon" as shown. */
+data class BeaconModeUiState(
+    val enabled: Boolean,
+    val startMinutes: Int?,
+    val endMinutes: Int?,
+    val key: String,
+    val batteryUnrestricted: Boolean,
+)
+
+/** Settings → Act as a beacon: this device broadcasts a beacon (e.g. a tablet as a portable desk). */
+@Composable
+private fun BeaconModeCard(state: BeaconModeUiState, onChange: (Boolean, Int?, Int?) -> Unit, onAllowBackground: () -> Unit) {
+    var picking by remember { mutableStateOf<Boolean?>(null) } // true = start, false = end
+    val hours = state.startMinutes != null && state.endMinutes != null
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Text(
+                stringResource(R.string.beacon_mode_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            SwitchSettingsRow(
+                icon = Icons.Filled.BluetoothAudio,
+                title = stringResource(R.string.beacon_mode_switch),
+                summary = stringResource(R.string.beacon_mode_id, state.key),
+                checked = state.enabled,
+                onCheckedChange = { onChange(it, state.startMinutes, state.endMinutes) },
+            )
+            // It must keep running; Samsung, Nothing and others stop background apps without this.
+            if (state.enabled && !state.batteryUnrestricted) {
+                SettingsRow(
+                    icon = Icons.Filled.BatteryAlert,
+                    title = stringResource(R.string.beacon_mode_battery),
+                    summary = stringResource(R.string.beacon_mode_battery_desc),
+                    onClick = onAllowBackground,
+                )
+            }
+            SwitchSettingsRow(
+                icon = Icons.Filled.Schedule,
+                title = stringResource(R.string.beacon_mode_hours),
+                summary = if (hours) {
+                    "${formatMinuteOfDay(state.startMinutes!!)} → ${formatMinuteOfDay(state.endMinutes!!)}"
+                } else {
+                    stringResource(R.string.beacon_mode_always)
+                },
+                checked = hours,
+                onCheckedChange = { on -> onChange(state.enabled, if (on) 9 * 60 else null, if (on) 17 * 60 else null) },
+            )
+            if (hours) {
+                SettingsRow(
+                    icon = null,
+                    title = stringResource(R.string.schedule_start_title),
+                    summary = formatMinuteOfDay(state.startMinutes!!),
+                    onClick = { picking = true },
+                )
+                SettingsRow(
+                    icon = null,
+                    title = stringResource(R.string.schedule_end_title),
+                    summary = formatMinuteOfDay(state.endMinutes!!),
+                    onClick = { picking = false },
+                )
+            }
+            Text(
+                stringResource(R.string.beacon_mode_hint),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+    }
+    picking?.let { start ->
+        TimePickerDialog(
+            initialMinuteOfDay = (if (start) state.startMinutes else state.endMinutes) ?: 0,
+            onConfirm = { minutes ->
+                if (start) onChange(state.enabled, minutes, state.endMinutes) else onChange(state.enabled, state.startMinutes, minutes)
+                picking = null
+            },
+            onDismiss = { picking = null },
+        )
+    }
+}
+
+/** Calendar triggers, with icons and drag to reorder. */
+@Composable
+private fun CalendarCard(
+    triggers: List<CalendarTrigger>,
+    profiles: List<LockProfile>,
+    onEdit: (CalendarTrigger?) -> Unit,
+    onReorder: (List<CalendarTrigger>) -> Unit,
+    granted: Set<AppPermission>,
+) {
+    val context = LocalContext.current
+    val profilesById = remember(profiles) { profiles.associateBy { it.id } }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.calendar_title), style = MaterialTheme.typography.titleMedium)
+            if (triggers.isEmpty()) {
+                Text(stringResource(R.string.calendar_empty), style = MaterialTheme.typography.bodySmall)
+            }
+            ReorderableColumn(triggers, key = { it.id }, onReorder = onReorder) { trigger, _ ->
+                val profile = trigger.profileId?.let { profilesById[it] }
+                ListRow(
+                    title = trigger.name,
+                    subtitle = withPauseNote(
+                        formatCalendarTrigger(context, trigger, profile?.name),
+                        pauseNote(context, PermissionNeeds.check(PermissionNeeds.forCalendarTrigger, granted)),
+                    ),
+                    onClick = { onEdit(trigger) },
+                    leading = { ProfileIcon(automationIcon(trigger.icon, profile), trigger.name) },
+                )
+            }
+            OutlinedButton(onClick = { onEdit(null) }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.calendar_new))
+            }
+        }
+    }
+}
+
+/** Settings → Calendar: what new calendar triggers start with. */
+@Composable
+private fun CalendarDefaultsCard(skipDeclined: Boolean, skipFree: Boolean, onChange: (Boolean, Boolean) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Text(
+                stringResource(R.string.calendar_defaults_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            SwitchSettingsRow(
+                icon = Icons.Filled.EventBusy,
+                title = stringResource(R.string.calendar_skip_declined),
+                summary = null,
+                checked = skipDeclined,
+                onCheckedChange = { onChange(it, skipFree) },
+            )
+            SwitchSettingsRow(
+                icon = Icons.Filled.EventAvailable,
+                title = stringResource(R.string.calendar_skip_free),
+                summary = null,
+                checked = skipFree,
+                onCheckedChange = { onChange(skipDeclined, it) },
+            )
+            Text(
+                stringResource(R.string.calendar_defaults_hint),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
         }
     }
 }
@@ -315,6 +573,7 @@ class ReorderActions(
     val onReorderSchedules: (List<LockSchedule>) -> Unit,
     val onReorderTriggers: (List<AlarmTrigger>) -> Unit,
     val onReorderLocations: (List<LocationTrigger>) -> Unit,
+    val onReorderCalendars: (List<CalendarTrigger>) -> Unit,
 )
 
 /** Space a FloatingActionButton (56 dp + 16 dp margin) needs at the end of a scrolling list. */
@@ -395,6 +654,7 @@ private fun AlarmTriggersCard(
     appLabel: (String) -> String,
     onEdit: (AlarmTrigger?) -> Unit,
     onReorder: (List<AlarmTrigger>) -> Unit,
+    granted: Set<AppPermission>,
 ) {
     val context = LocalContext.current
     val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -408,7 +668,10 @@ private fun AlarmTriggersCard(
                 val profile = trigger.profileId?.let { profilesById[it] }
                 ListRow(
                     title = trigger.name,
-                    subtitle = formatAlarmTrigger(context, trigger, appLabel, profile?.name),
+                    subtitle = withPauseNote(
+                        formatAlarmTrigger(context, trigger, appLabel, profile?.name),
+                        pauseNote(context, PermissionNeeds.check(PermissionNeeds.forAlarmTrigger, granted)),
+                    ),
                     onClick = { onEdit(trigger) },
                     leading = { ProfileIcon(automationIcon(trigger.icon, profile), trigger.name) },
                 )
@@ -437,6 +700,18 @@ data class SetupStatus(
     val preciseLocationGranted: Boolean = false,
     val backgroundLocationGranted: Boolean = false,
     val locationServicesOn: Boolean = false,
+    /** True if any calendar trigger exists, so the calendar row matters. */
+    val calendarTriggersExist: Boolean = false,
+    val calendarGranted: Boolean = false,
+    /** True if any place uses a beacon, so the "Nearby devices" row matters. */
+    val beaconPlacesExist: Boolean = false,
+    val bluetoothScanGranted: Boolean = false,
+    /** True if any place uses a paired Bluetooth device, so the "connect" row matters. */
+    val btDevicePlacesExist: Boolean = false,
+    val bluetoothConnectGranted: Boolean = false,
+    /** The "Nearby devices" scan permission alone (without location), for Settings → Permissions. */
+    val nearbyScanGranted: Boolean = false,
+    val bluetoothAdvertiseGranted: Boolean = false,
 )
 
 /** What each "Enable" button in the setup checklist does. */
@@ -451,6 +726,9 @@ class SetupActions(
     val onGrantLocation: () -> Unit,
     val onGrantBackgroundLocation: () -> Unit,
     val onEnableLocationServices: () -> Unit,
+    val onGrantCalendar: () -> Unit,
+    val onGrantBluetoothScan: () -> Unit,
+    val onGrantBluetoothConnect: () -> Unit,
 )
 
 /** The permissions checklist. Shared by the home screen and onboarding. */
@@ -467,6 +745,15 @@ fun SetupChecklist(setup: SetupStatus, actions: SetupActions) {
                 SetupRow(stringResource(R.string.setup_location), setup.preciseLocationGranted, actions.onGrantLocation)
                 SetupRow(stringResource(R.string.setup_background_location), setup.backgroundLocationGranted, actions.onGrantBackgroundLocation)
                 SetupRow(stringResource(R.string.setup_location_services), setup.locationServicesOn, actions.onEnableLocationServices)
+            }
+            if (setup.beaconPlacesExist) {
+                SetupRow(stringResource(R.string.setup_nearby_devices), setup.bluetoothScanGranted, actions.onGrantBluetoothScan)
+            }
+            if (setup.btDevicePlacesExist) {
+                SetupRow(stringResource(R.string.setup_paired_devices), setup.bluetoothConnectGranted, actions.onGrantBluetoothConnect)
+            }
+            if (setup.calendarTriggersExist) {
+                SetupRow(stringResource(R.string.setup_calendar), setup.calendarGranted, actions.onGrantCalendar)
             }
             if (setup.alarmTriggersExist) {
                 SetupRow(stringResource(R.string.setup_notification_access), setup.notificationAccessGranted, actions.onGrantNotificationAccess)
@@ -555,6 +842,7 @@ private fun ProfilesCard(
     onStart: (LockProfile, Long) -> Unit,
     onReorder: (List<LockProfile>) -> Unit,
     presetsSec: List<Long>,
+    granted: Set<AppPermission>,
 ) {
     val context = LocalContext.current
     var starting by remember { mutableStateOf<LockProfile?>(null) }
@@ -570,7 +858,11 @@ private fun ProfilesCard(
             ReorderableColumn(profiles, key = { it.id }, onReorder = onReorder) { profile, _ ->
                 ListRow(
                     title = profile.name,
-                    subtitle = formatProfileSummary(context, profile),
+                    // Without DND access the lock still works, just without DND / grayscale.
+                    subtitle = withPauseNote(
+                        formatProfileSummary(context, profile),
+                        pauseNote(context, PermissionNeeds.check(PermissionNeeds.forProfile(profile), granted, partial = true)),
+                    ),
                     onClick = { onEdit(profile) },
                     leading = { ProfileIcon(profile.icon, profile.name) },
                     trailing = {
@@ -666,6 +958,23 @@ private fun ListRow(
     HorizontalDivider()
 }
 
+/** A list row's summary with its "Paused: needs …" line, if any. */
+private fun withPauseNote(summary: String, note: String?): String = listOfNotNull(summary, note).joinToString("\n")
+
+/** Settings → Permissions: see, allow, manage or revoke each one. */
+@Composable
+private fun PermissionsCard(onOpen: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.permissions_title), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.permissions_card_hint), style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.permissions_open))
+            }
+        }
+    }
+}
+
 /** Settings → Lock defaults: the baseline for new profiles and Quick lock's "Reset to defaults". */
 @Composable
 private fun LockDefaultsCard(onOpen: () -> Unit) {
@@ -702,11 +1011,24 @@ private fun QuickLockSection(enabled: Boolean, quickLock: LockSettings, presetsS
     var showResetConfirm by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        // Start sits in the header, so it's reachable without scrolling past the settings.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.quick_lock), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             IconButton(onClick = { showResetConfirm = true }) {
                 Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.quick_reset_defaults))
             }
+            Button(
+                onClick = { showConfirm = true },
+                enabled = enabled,
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
+            ) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.start_button), style = MaterialTheme.typography.titleMedium)
+            }
+        }
+        if (!enabled) {
+            Text(stringResource(R.string.start_needs_admin), style = MaterialTheme.typography.bodySmall)
         }
         LockSettingsSections(
             settings = quickLock,
@@ -715,12 +1037,6 @@ private fun QuickLockSection(enabled: Boolean, quickLock: LockSettings, presetsS
             onChange = actions.onQuickSettingsChange,
             onEditAllowedApps = actions.onEditQuickApps,
         )
-        Button(onClick = { showConfirm = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.start_button))
-        }
-        if (!enabled) {
-            Text(stringResource(R.string.start_needs_admin), style = MaterialTheme.typography.bodySmall)
-        }
     }
 
     if (showConfirm) {

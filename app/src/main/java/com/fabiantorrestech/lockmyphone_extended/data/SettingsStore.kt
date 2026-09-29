@@ -6,6 +6,7 @@ import androidx.core.content.edit
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
+import com.fabiantorrestech.lockmyphone_extended.data.backup.SettingsSnapshot
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmDayRules
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationEngineChoice
@@ -16,6 +17,12 @@ import java.security.SecureRandom
 
 /** The app's colour theme. OLED is dark with pure-black backgrounds. */
 enum class ThemeMode { SYSTEM, LIGHT, DARK, OLED }
+
+/** Settings that aren't in a backup (the backup itself, and this device's beacon mode); changing them doesn't need a new backup. */
+val BACKUP_SETTING_KEYS = setOf(
+    "backup_folder_uri", "auto_backup_folder_uri", "auto_backup_enabled", "last_backup_at",
+    "beacon_mode_enabled", "beacon_mode_start", "beacon_mode_end", "beacon_mode_id",
+)
 
 /** How many one-tap lock lengths the user can keep. */
 const val MAX_DURATION_PRESETS = 6
@@ -150,6 +157,129 @@ class SettingsStore(context: Context) {
     fun setAlarmDayStartMinutes(minutes: Int) {
         prefs.edit { putInt(KEY_ALARM_DAY_START, minutes) }
         _alarmDayStartMinutes.value = minutes
+    }
+
+    /** Calendar triggers: new ones start with these (declined events skipped, "free" ones counted). */
+    private val _calendarSkipDeclined = MutableStateFlow(prefs.getBoolean(KEY_CALENDAR_SKIP_DECLINED, true))
+    val calendarSkipDeclined: StateFlow<Boolean> = _calendarSkipDeclined.asStateFlow()
+
+    private val _calendarSkipFree = MutableStateFlow(prefs.getBoolean(KEY_CALENDAR_SKIP_FREE, false))
+    val calendarSkipFree: StateFlow<Boolean> = _calendarSkipFree.asStateFlow()
+
+    fun setCalendarDefaults(skipDeclined: Boolean, skipFree: Boolean) {
+        prefs.edit {
+            putBoolean(KEY_CALENDAR_SKIP_DECLINED, skipDeclined)
+            putBoolean(KEY_CALENDAR_SKIP_FREE, skipFree)
+        }
+        _calendarSkipDeclined.value = skipDeclined
+        _calendarSkipFree.value = skipFree
+    }
+
+    /** Backups: the folder the user picked (a persisted document-tree URI), auto backup, last run. */
+    private val _backupFolderUri = MutableStateFlow(prefs.getString(KEY_BACKUP_FOLDER, null))
+    val backupFolderUri: StateFlow<String?> = _backupFolderUri.asStateFlow()
+
+    /** Where auto backups go; null = the backup folder. */
+    private val _autoBackupFolderUri = MutableStateFlow(prefs.getString(KEY_AUTO_BACKUP_FOLDER, null))
+    val autoBackupFolderUri: StateFlow<String?> = _autoBackupFolderUri.asStateFlow()
+
+    fun setAutoBackupFolder(uri: String?) {
+        prefs.edit { putString(KEY_AUTO_BACKUP_FOLDER, uri) }
+        _autoBackupFolderUri.value = uri
+    }
+
+    private val _autoBackupEnabled = MutableStateFlow(prefs.getBoolean(KEY_AUTO_BACKUP, false))
+    val autoBackupEnabled: StateFlow<Boolean> = _autoBackupEnabled.asStateFlow()
+
+    private val _lastBackupAtMs = MutableStateFlow(prefs.getLong(KEY_LAST_BACKUP_AT, 0L).takeIf { it > 0 })
+    val lastBackupAtMs: StateFlow<Long?> = _lastBackupAtMs.asStateFlow()
+
+    fun setBackupFolder(uri: String?) {
+        prefs.edit { putString(KEY_BACKUP_FOLDER, uri) }
+        _backupFolderUri.value = uri
+    }
+
+    fun setAutoBackupEnabled(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_AUTO_BACKUP, enabled) }
+        _autoBackupEnabled.value = enabled
+    }
+
+    fun setLastBackupAt(timeMs: Long) {
+        prefs.edit { putLong(KEY_LAST_BACKUP_AT, timeMs) }
+        _lastBackupAtMs.value = timeMs
+    }
+
+    /** Called on every saved setting (for the auto backup). Held weakly by Android: keep a reference. */
+    fun addChangeListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener) {
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    /** The settings a backup carries (not the stop token, not the backup folder). */
+    fun snapshot() = SettingsSnapshot(
+        quickDurationSec = quickDurationSec.value,
+        quickAllowedPackages = allowedPackages.value,
+        quickBypass = bypassDefaults.value,
+        quickDndEnabled = quickDndEnabled.value,
+        quickDndLevel = quickDndLevel.value,
+        quickGrayscale = quickGrayscale.value,
+        quickResumeMode = quickResumeMode.value,
+        quickChoiceSeconds = quickChoiceSeconds.value,
+        lockDefaults = lockDefaults.value,
+        durationPresetsSec = durationPresetsSec.value,
+        themeMode = themeMode.value,
+        showAppIcons = showAppIcons.value,
+        alarmDayStartMinutes = alarmDayStartMinutes.value,
+        locationEngine = locationEngine.value,
+        calendarSkipDeclined = calendarSkipDeclined.value,
+        calendarSkipFree = calendarSkipFree.value,
+        oemProfileId = oemProfileId.value,
+        intentStopEnabled = intentStopEnabled.value,
+    )
+
+    fun restore(s: SettingsSnapshot) {
+        setQuickDurationSec(s.quickDurationSec)
+        setAllowedPackages(s.quickAllowedPackages)
+        setBypassDefaults(s.quickBypass)
+        setQuickDndEnabled(s.quickDndEnabled)
+        setQuickDndLevel(s.quickDndLevel)
+        setQuickGrayscale(s.quickGrayscale)
+        setQuickResume(s.quickResumeMode, s.quickChoiceSeconds)
+        setLockDefaults(s.lockDefaults)
+        setDurationPresets(s.durationPresetsSec)
+        setThemeMode(s.themeMode)
+        setShowAppIcons(s.showAppIcons)
+        setAlarmDayStartMinutes(s.alarmDayStartMinutes)
+        setLocationEngine(s.locationEngine)
+        setCalendarDefaults(s.calendarSkipDeclined, s.calendarSkipFree)
+        setOemProfileId(s.oemProfileId)
+        setIntentStopEnabled(s.intentStopEnabled)
+    }
+
+    /** "Act as a beacon": this device broadcasts a beacon other phones can use as a place. */
+    private val _beaconModeEnabled = MutableStateFlow(prefs.getBoolean(KEY_BEACON_MODE, false))
+    val beaconModeEnabled: StateFlow<Boolean> = _beaconModeEnabled.asStateFlow()
+
+    /** Broadcast only between these minutes of the day (null = always). */
+    private val _beaconModeStartMinutes = MutableStateFlow(prefs.getInt(KEY_BEACON_START, -1).takeIf { it >= 0 })
+    val beaconModeStartMinutes: StateFlow<Int?> = _beaconModeStartMinutes.asStateFlow()
+
+    private val _beaconModeEndMinutes = MutableStateFlow(prefs.getInt(KEY_BEACON_END, -1).takeIf { it >= 0 })
+    val beaconModeEndMinutes: StateFlow<Int?> = _beaconModeEndMinutes.asStateFlow()
+
+    /** This device's beacon ID, made once at random. */
+    val beaconModeId: Int
+        get() = prefs.getInt(KEY_BEACON_ID, 0).takeIf { it != 0 }
+            ?: SecureRandom().nextInt().let { if (it == 0) 1 else it }.also { id -> prefs.edit { putInt(KEY_BEACON_ID, id) } }
+
+    fun setBeaconMode(enabled: Boolean, startMinutes: Int?, endMinutes: Int?) {
+        prefs.edit {
+            putBoolean(KEY_BEACON_MODE, enabled)
+            putInt(KEY_BEACON_START, startMinutes ?: -1)
+            putInt(KEY_BEACON_END, endMinutes ?: -1)
+        }
+        _beaconModeEnabled.value = enabled
+        _beaconModeStartMinutes.value = startMinutes
+        _beaconModeEndMinutes.value = endMinutes
     }
 
     /** Which engine watches location triggers; Play Services by default (ADR 0004). */
@@ -337,6 +467,16 @@ class SettingsStore(context: Context) {
         val DEFAULT_DURATION_PRESETS = listOf(15L, 30L, 60L, 120L, 240L, 480L).map { it * 60 }
         const val KEY_ALARM_DAY_START = "alarm_day_start_minutes"
         const val KEY_LOCATION_ENGINE = "location_engine"
+        const val KEY_CALENDAR_SKIP_DECLINED = "calendar_skip_declined"
+        const val KEY_CALENDAR_SKIP_FREE = "calendar_skip_free"
+        const val KEY_BACKUP_FOLDER = "backup_folder_uri"
+        const val KEY_AUTO_BACKUP = "auto_backup_enabled"
+        const val KEY_AUTO_BACKUP_FOLDER = "auto_backup_folder_uri"
+        const val KEY_BEACON_MODE = "beacon_mode_enabled"
+        const val KEY_BEACON_START = "beacon_mode_start"
+        const val KEY_BEACON_END = "beacon_mode_end"
+        const val KEY_BEACON_ID = "beacon_mode_id"
+        const val KEY_LAST_BACKUP_AT = "last_backup_at"
         const val KEY_DEFAULT_DND_LEVEL = "default_dnd_level"
         const val KEY_QUICK_RESUME_MODE = "quick_resume_mode"
         const val KEY_QUICK_CHOICE_SECONDS = "quick_choice_seconds"
