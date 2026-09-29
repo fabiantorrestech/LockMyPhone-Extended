@@ -1,0 +1,412 @@
+<resources>
+    <string name="app_name">LockMyPhone-Extended</string>
+
+    <!-- Device admin -->
+    <string name="admin_label">LockMyPhone-Extended lock enforcement</string>
+    <string name="admin_description">Locks the device again whenever it is unlocked during a lock period.</string>
+    <string name="admin_explanation">Needed to lock your phone again if it is unlocked during a lock period.</string>
+    <string name="admin_disable_warning">Disabling this stops LockMyPhone-Extended from enforcing locks.</string>
+    <string name="admin_disable_warning_locked">A lock is active. Disabling this admin defeats the lock you set for yourself.</string>
+
+    <!-- Notifications -->
+    <string name="channel_status_name">Lock status</string>
+    <string name="channel_status_description">Shows the time remaining in the current lock.</string>
+    <string name="notif_status_title">Locked until %1$s</string>
+
+    <!-- Foreground service -->
+    <string name="fgs_special_use_reason">Keeps the device locked for the period the user chose, by listening for unlocks.</string>
+
+    <!-- Home -->
+    <string name="setup_title">Setup</string>
+    <string name="setup_admin">Device admin</string>
+    <string name="setup_notifications">Notifications</string>
+    <string name="setup_row_done">✓ %1$s</string>
+    <string name="setup_row_enable">Enable %1$s</string>
+    <string name="start_title">Start a lock</string>
+    <string name="start_hours_label">Hours</string>
+    <string name="start_minutes_short_label">Minutes</string>
+    <string name="start_seconds_label">Seconds</string>
+    <string name="start_duration_hint">Up to 7 days. Minutes and seconds: 0 to 59.</string>
+    <string name="start_button">Lock now</string>
+    <string name="start_needs_admin">Enable Device admin first.</string>
+    <string name="start_confirm_title">Lock your phone?</string>
+    <string name="start_confirm_body">Your phone will lock for %1$s. You won\'t be able to end the lock early.</string>
+    <string name="start_confirm_yes">Lock</string>
+    <string name="manual_lock_label">Manual lock (%1$s)</string>
+
+    <!-- Locked -->
+    <string name="locked_title">Phone is locked</string>
+    <string name="locked_until">Until %1$s</string>
+
+    <!-- Accessibility -->
+    <string name="accessibility_label">LockMyPhone-Extended app guard</string>
+    <string name="accessibility_description">During a lock, watches which app is on screen so you can use only your allowed apps. Leaving them, including opening the app switcher or the home screen, locks the phone. It does not read screen content.</string>
+
+    <!-- Quick launch -->
+    <string name="channel_quick_launch_name">Allowed apps</string>
+    <string name="channel_quick_launch_description">Lock-screen shortcuts to the Phone and your allowed apps during a lock.</string>
+    <string name="notif_quick_launch_title">Allowed apps</string>
+    <string name="notif_quick_launch_text">Tap to open an allowed app. Leaving it locks the phone again.</string>
+    <string name="notif_action_phone">Phone</string>
+    <string name="notif_action_more">More…</string>
+    <string name="picker_title">Allowed apps</string>
+    <string name="pass_refused">That app is not allowed during this lock.</string>
+    <string name="pass_app_missing">That app cannot be opened.</string>
+
+    <!-- Allowed apps settings -->
+    <string name="setup_accessibility">Accessibility service</string>
+    <string name="setup_exact_alarms">Alarms &amp; reminders</string>
+    <string name="allowed_search_label">Search apps</string>
+    <string name="allowed_selected_count">%1$d selected</string>
+    <string name="allowed_title">Allowed apps</string>
+    <string name="allowed_summary">%1$d apps selected. The Phone is always available.</string>
+    <string name="allowed_needs_accessibility">Needs the accessibility service. Without it, only calls and emergency calls work during a lock.</string>
+    <string name="allowed_edit">Choose allowed apps</string>
+    <string name="allowed_phone_note">Checked apps can be opened from the lock-screen notification during a lock. Leaving them, including via the home screen or app switcher, locks the phone.</string>
+    <!-- Device profile -->
+    <string name="device_title">Device</string>
+    <string name="device_change">Change device type</string>
+    <string name="device_detected">Detected: %1$s %2$s</string>
+    <string name="device_automatic">Automatic (%1$s)</string>
+    <string name="device_unverified">%1$s (not yet verified)</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_title">Welcome</string>
+    <string name="onboarding_step">Step %1$d of %2$d</string>
+    <string name="onboarding_device_title">Your device</string>
+    <string name="onboarding_device_body">Launchers, phone apps and emergency screens differ by manufacturer. Pick your device type so the lock knows which system screens to allow.</string>
+    <string name="onboarding_permissions_title">Permissions</string>
+    <string name="onboarding_permissions_body">Device admin is required to lock the phone. Accessibility is needed to use allowed apps during a lock. You can finish now and grant these later from the home screen.</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_back">Back</string>
+    <string name="onboarding_finish">Finish</string>
+
+    <!-- Diagnostics -->
+    <string name="diag_open">Diagnostics</string>
+    <string name="diag_title">Diagnostics</string>
+    <string name="diag_hint">Open other apps, the app switcher, or the power / emergency menu, then come back here. Each window seen by the accessibility service is listed, newest first. Only package names are recorded, only in memory.</string>
+    <string name="diag_needs_accessibility">Enable the accessibility service to record windows.</string>
+    <string name="diag_copy">Copy</string>
+    <string name="diag_clear">Clear</string>
+    <string name="diag_copied">Copied</string>
+
+    <!-- Early unlock (bypass) -->
+    <string name="bypass_switch">Allow early unlock</string>
+    <string name="bypass_wait_label">Wait before unlocking (minutes)</string>
+    <string name="bypass_hint">From the lock screen you can request an early unlock. The lock ends after this wait, unless you cancel it.</string>
+    <string name="start_confirm_body_bypass">Your phone will lock for %1$s. You can unlock early from the lock-screen notification, after a %2$d-minute wait.</string>
+    <string name="notif_action_request_bypass">Unlock early (wait %1$s)</string>
+    <string name="notif_action_cancel_bypass">Cancel early unlock</string>
+    <string name="notif_bypass_pending_title">Unlocking early at %1$s</string>
+    <string name="notif_bypass_chip">Unlocking</string>
+    <string name="wait_minutes">%1$d min</string>
+    <string name="wait_minutes_seconds">%1$d min %2$d s</string>
+
+    <!-- Setup (M6) -->
+    <string name="setup_background">Run in background (battery unrestricted)</string>
+
+    <!-- Profiles -->
+    <string name="profiles_title">Lock profiles</string>
+    <string name="profile_default_name">Default</string>
+    <string name="profile_new">New profile</string>
+    <string name="profile_icon">Icon</string>
+    <string name="reorder_hint">Hold and drag a row to reorder.</string>
+    <string name="profile_start_named">Start %1$s</string>
+    <string name="profile_icon_tab_icons">Icons</string>
+    <string name="profile_icon_tab_emoji">Emoji</string>
+    <string name="profile_icon_change">Choose</string>
+    <string name="profile_icon_pick_title">Profile icon</string>
+    <string name="profile_icon_custom">Or type any emoji</string>
+    <string name="profile_icon_use_custom">Use it</string>
+    <string name="profile_icon_none">No icon</string>
+    <string name="profile_edit_title">Edit profile</string>
+    <string name="profile_name">Name</string>
+    <string name="profile_name_taken">Another profile already has this name.</string>
+    <string name="profile_default_duration">Default lock length</string>
+    <string name="profile_phone_always">the Phone is always available</string>
+    <string name="profile_picker">Profile: %1$s</string>
+    <string name="profile_summary_bypass">early unlock after %1$d min</string>
+    <string name="profile_summary_no_bypass">no early unlock</string>
+    <string name="profile_delete_title">Delete \"%1$s\"?</string>
+    <string name="profile_delete_body">Schedules and alarm triggers that use this profile are deleted too.</string>
+    <string name="bypass_off_hint">No early unlock: the lock always runs to its end.</string>
+    <plurals name="apps_count">
+        <item quantity="one">%1$d allowed app</item>
+        <item quantity="other">%1$d allowed apps</item>
+    </plurals>
+    <string name="start_no_profile">Create a profile first.</string>
+    <string name="quick_lock">Quick lock</string>
+    <string name="start_mode_profile">Profile</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+
+    <!-- Schedules -->
+    <string name="schedules_title">Schedules</string>
+    <string name="schedules_empty">No schedules yet. A schedule locks the phone automatically, e.g. every night from 10 PM to 7 AM.</string>
+    <string name="schedule_new">New schedule</string>
+    <string name="schedule_edit_title">Edit schedule</string>
+    <string name="schedule_days">Days</string>
+    <string name="schedule_start">Start %1$s</string>
+    <string name="schedule_end">End %1$s</string>
+    <string name="schedule_overnight">Ends the next day.</string>
+    <string name="schedule_enabled">Schedule on</string>
+    <string name="schedule_off">%1$s (off)</string>
+    <string name="schedule_delete_title">Delete this schedule?</string>
+    <string name="schedule_lock_label">Scheduled: %1$s</string>
+    <string name="days_every_day">Every day</string>
+    <string name="days_weekdays">Weekdays</string>
+    <string name="days_weekends">Weekends</string>
+    <string name="days_none">No days</string>
+
+    <!-- Intent API -->
+    <string name="intent_title">Automation (MacroDroid / Tasker)</string>
+    <string name="intent_body">Use \"Send Intent\" with target Broadcast and this package. Starting a lock needs no token. Leaving out \"profile\" uses your Quick lock settings.</string>
+    <string name="intent_copy_start">Copy start action</string>
+    <string name="intent_stop_switch">Allow stopping a lock by intent</string>
+    <string name="intent_token_label">Stop token (send as extra \"token\")</string>
+    <string name="intent_copy_token">Copy token</string>
+    <string name="intent_regenerate">Regenerate</string>
+    <string name="intent_stop_hint">Anyone with this token can end your locks. Settings can\'t be opened during a lock, so set up stop automations in advance.</string>
+    <string name="intent_regenerate_title">Regenerate the token?</string>
+    <string name="intent_regenerate_body">Automations that use the old token will no longer be able to stop locks.</string>
+    <string name="intent_lock_label">Automation: %1$s</string>
+
+    <!-- M6.1: single lock notification, profile Start, DND -->
+    <string name="notif_action_allowed_apps">Allowed apps…</string>
+    <string name="notif_passes_unavailable">Allowed apps need the accessibility service. Turn it on in LockMyPhone-Extended.</string>
+    <string name="profile_start">▶ Start</string>
+    <string name="profile_start_title">Start \"%1$s\"</string>
+    <string name="start_confirm_no_end_early">The lock can only end early if this profile allows early unlock.</string>
+    <string name="profile_summary_grayscale">◐ grayscale</string>
+    <string name="profile_summary_dnd">🔕 DND (%1$s)</string>
+    <string name="dnd_switch">Do Not Disturb during the lock</string>
+    <string name="setup_dnd">Do Not Disturb access</string>
+    <string name="dnd_access_needed">Allow Do Not Disturb access for LockMyPhone-Extended, so it can silence the phone during locks.</string>
+    <string name="dnd_rule_name">LockMyPhone lock</string>
+    <string name="grayscale_rule_name">LockMyPhone grayscale</string>
+    <string name="dnd_rule_name_level">%1$s (%2$s)</string>
+    <string name="dnd_level_priority">Priority only</string>
+    <string name="dnd_level_alarms">Alarms only</string>
+    <string name="dnd_level_silence">Total silence</string>
+    <string name="dnd_level_priority_desc">Your Do Not Disturb exceptions get through (e.g. starred contacts, repeat callers, alarms).</string>
+    <string name="dnd_level_alarms_desc">Only alarms and media get through.</string>
+    <string name="dnd_level_silence_desc">Nothing gets through. ⚠ This also silences alarms, including QRAlarm.</string>
+    <string name="dnd_level_hint">Emergency calls always ring. On Android 15 and later, fine-tune each level in Settings → Modes.</string>
+    <string name="dnd_rule_condition">During a lock</string>
+
+    <!-- M6.2: icons toggle, theme -->
+    <string name="show_app_icons">Show app icons in the lock-screen app list</string>
+    <string name="show_app_icons_hint">The Allowed apps list you open from the lock screen during a lock. App lists in settings always show icons.</string>
+    <string name="appearance_title">Appearance</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_oled">OLED</string>
+
+    <!-- M8: tabs, alarm triggers -->
+    <string name="home_title">LockMyPhone Extended</string>
+    <string name="tab_quick_lock">Quick lock</string>
+    <string name="tab_profiles">Profiles</string>
+    <string name="tab_automations">Automations</string>
+    <string name="tab_settings">Settings</string>
+    <string name="setup_banner">Setup isn\'t finished: device admin and the accessibility service are needed to lock.</string>
+    <string name="setup_banner_button">Open Settings</string>
+    <string name="setup_notification_access">Notification access (alarm triggers)</string>
+    <string name="alarm_listener_label">LockMyPhone-Extended alarm triggers</string>
+    <string name="alarm_triggers_title">Alarm triggers</string>
+    <string name="alarm_triggers_empty">Lock the phone after you dismiss a specific alarm, e.g. your QRAlarm morning alarm.</string>
+    <string name="alarm_trigger_new">New alarm trigger</string>
+    <string name="alarm_trigger_edit_title">Edit alarm trigger</string>
+    <string name="alarm_trigger_name">Name</string>
+    <string name="alarm_trigger_app">Alarm app</string>
+    <string name="alarm_trigger_pick_app">Choose alarm app</string>
+    <string name="alarm_trigger_which">Which alarm</string>
+    <string name="alarm_trigger_needs_access">To recognise the alarm, allow notification access. Only the chosen alarm app\'s notifications are looked at, and nothing is stored.</string>
+    <string name="alarm_trigger_not_learned">Not learned yet.</string>
+    <string name="alarm_trigger_waiting">Waiting for the alarm to ring…</string>
+    <string name="alarm_trigger_timer_rejected">That was a timer, not an alarm. Timers never start a lock. Ring an alarm instead…</string>
+    <string name="alarm_trigger_learned_notification">Learned: notification #%1$d</string>
+    <string name="alarm_trigger_learned_id">Learned: internal alarm #%1$d</string>
+    <string name="alarm_trigger_learned_text">Learned: the alarm labelled \"%1$s\"</string>
+    <string name="alarm_trigger_text_warning">Recognised by the alarm\'s label. Give it a label no other alarm uses; if you rename it, learn it again.</string>
+    <string name="alarm_trigger_learn">Learn this alarm</string>
+    <string name="alarm_trigger_relearn">Learn again</string>
+    <string name="alarm_trigger_learn_hint">Tap Learn, then make this alarm ring once (e.g. set it 1 minute from now), and dismiss or snooze it. Other alarms from the same app won\'t trigger the lock.</string>
+    <string name="alarm_trigger_lock">Lock after dismissing</string>
+    <string name="alarm_trigger_delay">Delay before locking (minutes, 0 = right away)</string>
+    <string name="alarm_trigger_enabled">Trigger on</string>
+    <string name="alarm_trigger_delete_title">Delete \"%1$s\"?</string>
+    <string name="alarm_trigger_right_away">right away</string>
+    <string name="alarm_trigger_after">after %1$d min</string>
+    <string name="alarm_lock_label">Alarm: %1$s</string>
+
+    <!-- M8.1: QRAlarm alarms by ID + time -->
+    <string name="alarm_trigger_learned_id_time">Learned: internal alarm #%1$d · rings %2$s</string>
+    <string name="alarm_trigger_qralarm_note">QRAlarm doesn\'t put alarm names in its notifications, so this alarm is recognised by its internal ID. Changing its time, days or name in QRAlarm is fine.</string>
+    <string name="alarm_trigger_qralarm_dont_delete">⚠ Don\'t delete this alarm in QRAlarm. The trigger is linked to that exact alarm, so once it\'s deleted (even if you re-create it with the same name and time) the trigger no longer follows any alarm. To skip it for a while, turn it off in QRAlarm instead. If you do delete it, re-link the trigger here.</string>
+    <string name="alarm_trigger_upcoming_title">Or pick an upcoming QRAlarm alarm</string>
+    <string name="alarm_trigger_upcoming_empty">QRAlarm lists an alarm here up to 2 hours before it rings. To pick one now, set it within 2 hours in QRAlarm, tap Refresh, pick it, then set its time back.</string>
+    <string name="alarm_trigger_upcoming_item">%1$s — internal alarm #%2$d</string>
+    <string name="alarm_trigger_unknown_time">Unknown time</string>
+    <string name="alarm_trigger_upcoming_refresh">Refresh</string>
+    <string name="alarm_trigger_suggested_name">%1$s %2$s</string>
+
+    <!-- M8.2: internal ID wording + deleted-alarm warnings -->
+    <string name="alarm_trigger_name_hint">e.g. its name in the alarm app</string>
+    <string name="alarm_trigger_internal_id_note">#%1$d is QRAlarm\'s own internal number for this alarm, not the name you gave it (like \"WORK - Alarm 1\"). Put that name in the Name field above.</string>
+    <string name="alarm_trigger_expected_every">Expected to ring at least every … days</string>
+    <string name="alarm_trigger_expected_hint">If the alarm isn\'t seen for longer than this (plus 12 hours), you\'ll be warned that it may have been deleted or turned off.</string>
+    <string name="channel_trigger_warnings_name">Alarm trigger warnings</string>
+    <string name="channel_trigger_warnings_description">Warns when a learned alarm seems to have been deleted, so its trigger needs re-linking.</string>
+    <string name="trigger_warning_title">\"%1$s\" may need re-linking</string>
+    <string name="trigger_problem_recreated">Its alarm disappeared, and a new alarm appeared at the same time. It looks like it was deleted and re-created.</string>
+    <string name="trigger_problem_silent">Its alarm hasn\'t been seen for %1$d days. It may have been deleted, turned off, or moved.</string>
+    <string name="trigger_problem_suggestion">Possible replacement: internal alarm #%1$d (%2$s).</string>
+    <string name="trigger_warning_relink">Re-link to internal alarm #%1$d (%2$s)</string>
+    <string name="trigger_warning_open">Open trigger</string>
+    <string name="trigger_warning_fine">It\'s fine</string>
+    <string name="trigger_relinked">\"%1$s\" now follows internal alarm #%2$d</string>
+    <string name="alarm_access_off_banner">Notification access is off, so alarm triggers can\'t see alarms and won\'t lock the phone.</string>
+    <string name="allowed_apps_other_header">Other apps</string>
+
+    <!-- M8.3: unlocking back into an allowed app + Lock defaults -->
+    <string name="unlock_resume_title">After the screen turns off in an allowed app</string>
+    <string name="unlock_resume_app">Go back to the app</string>
+    <string name="unlock_resume_lock_screen">Show the lock screen, then lock again</string>
+    <string name="unlock_choice_seconds_label">Lock again after (seconds)</string>
+    <string name="unlock_resume_hint">This only applies when you unlock straight back into an allowed app. Any other app still locks the phone.</string>
+    <string name="locked_choice_countdown">Locking again in %1$d s. Pick an allowed app to stay unlocked.</string>
+    <string name="lock_defaults_title">Lock defaults</string>
+    <string name="lock_defaults_open">Edit lock defaults</string>
+    <string name="lock_defaults_hint">New profiles start with these settings, and Quick lock can copy them with Reset to defaults. Changing them later doesn\'t change existing profiles or Quick lock.</string>
+    <string name="quick_reset_defaults">Reset to defaults</string>
+    <string name="quick_reset_confirm_title">Reset Quick lock?</string>
+    <string name="quick_reset_confirm_body">Quick lock\'s length, allowed apps and other settings will be replaced with your Lock defaults.</string>
+
+    <!-- M8.8–M8.11: grayscale, length presets, editor redesign, first-alarm triggers -->
+    <string name="back">Back</string>
+    <string name="remove">Remove</string>
+    <string name="off">Off</string>
+    <string name="minutes_label">Minutes</string>
+    <string name="days_label">Days</string>
+    <string name="section_basics">Basics</string>
+    <string name="section_length">Length</string>
+    <string name="section_focus">Focus</string>
+    <string name="section_unlocking">Unlocking</string>
+    <string name="section_when">When</string>
+    <string name="section_which_alarm">Which alarm</string>
+    <string name="section_active_on">Active on</string>
+    <string name="lock_length">Lock length</string>
+    <string name="lock_target">Lock</string>
+    <string name="dnd_level_title">Do Not Disturb level</string>
+    <string name="grayscale_switch">Grayscale screen</string>
+    <string name="grayscale_hint">Turns the screen gray when the lock starts, and back to color when it ends.</string>
+    <string name="grayscale_unsupported">Needs Android 15 or later.</string>
+    <string name="bypass_summary_on">After a %1$d-minute wait</string>
+    <string name="bypass_summary_off">Not allowed</string>
+    <string name="unlock_resume_summary_lock_screen">Show the lock screen, lock again after %1$d s</string>
+    <string name="schedule_start_title">Starts at</string>
+    <string name="schedule_end_title">Ends at</string>
+    <string name="schedule_next_day">next day</string>
+    <string name="presets_title">Length presets</string>
+    <string name="presets_hint">One-tap lock lengths shown above the hours / minutes / seconds fields. Up to 6; tap one to remove it.</string>
+    <string name="presets_none">No presets.</string>
+    <string name="presets_add">Add a preset</string>
+    <string name="day_start_title">A day starts at</string>
+    <string name="day_start_hint">For alarm triggers\' day rules and \"first alarm of the day\": an alarm before this time counts toward the previous day.</string>
+    <string name="alarm_kind_specific">A specific alarm</string>
+    <string name="alarm_kind_specific_desc">One alarm you pick or learn from a single ring.</string>
+    <string name="alarm_kind_first">The first alarm of the day</string>
+    <string name="alarm_kind_first_desc">Whichever alarm you dismiss first that day, from the apps below.</string>
+    <string name="alarm_first_hint">Timers and stopwatches never count, and neither do snoozes. Later alarms that day are ignored.</string>
+    <string name="alarm_first_no_apps">No supported alarm app is installed (Clock, QRAlarm).</string>
+    <string name="active_every_day">Every day</string>
+    <string name="active_weekdays">Chosen weekdays</string>
+    <string name="active_once">Once (the next time only)</string>
+    <string name="active_dates">Specific dates</string>
+    <string name="active_once_hint">After it starts a lock once, this trigger turns itself off.</string>
+    <string name="active_add_date">Add a date</string>
+    <string name="active_day_start_hint">A day starts at %1$s (Settings).</string>
+    <string name="alarm_trigger_delay_title">Wait before locking</string>
+    <string name="alarm_trigger_expected_title">Expected to ring at least every</string>
+    <string name="alarm_trigger_expected_summary">%1$d days</string>
+    <string name="alarm_first_summary">First alarm (%1$s)</string>
+    <plurals name="dates_count">
+        <item quantity="one">%1$d date</item>
+        <item quantity="other">%1$d dates</item>
+    </plurals>
+    <!-- M10: location triggers -->
+    <string name="location_lock_label">At %1$s</string>
+    <string name="locations_title">Locations</string>
+    <string name="locations_empty">Start a lock when you arrive at a place, leave it, or for as long as you\'re there.</string>
+    <string name="location_new">New location</string>
+    <string name="location_edit_title">Edit location</string>
+    <string name="location_delete_title">Delete \"%1$s\"?</string>
+    <string name="location_name">Name</string>
+    <string name="location_name_hint">e.g. Home, Office, Gym</string>
+    <string name="location_needs_permission">Location triggers need precise location.</string>
+    <string name="location_allow">Allow precise location</string>
+    <string name="section_place">Place</string>
+    <string name="section_wifi">Wi-Fi</string>
+    <string name="section_behaviour">Behaviour</string>
+    <string name="location_use_current">Use my current location</string>
+    <string name="location_use_current_hint">Stand at the place, then tap. Works best outdoors or near a window.</string>
+    <string name="location_locating">Getting a precise fix…</string>
+    <string name="location_found">Set, accurate to about %1$d m</string>
+    <string name="location_fix_failed">Couldn\'t get a fix. Check that location is on, or type the coordinates.</string>
+    <string name="location_coordinates">Coordinates</string>
+    <string name="location_coordinates_label">Latitude, longitude</string>
+    <string name="location_coordinates_hint">e.g. 40.712776, -74.005974. In Google Maps, long-press a spot and copy the numbers.</string>
+    <string name="location_not_set">Not set</string>
+    <string name="location_radius">Radius</string>
+    <string name="location_radius_hint">25 to 2000 m. GPS is usually accurate to 5–20 m outdoors but can drift 30–100 m indoors; for indoor places, add the Wi-Fi rule.</string>
+    <string name="location_preview">Preview in Google Maps</string>
+    <string name="location_no_maps">No maps app installed.</string>
+    <string name="location_wifi_use">Use a Wi-Fi network</string>
+    <string name="location_wifi_required">Only while connected to %1$s (%2$s)</string>
+    <string name="location_wifi_unnamed">this router</string>
+    <string name="location_wifi_offer">Off · connected to %1$s now</string>
+    <string name="location_wifi_none">Off · connect to the place\'s Wi-Fi to use it</string>
+    <string name="location_wifi_hint">A Wi-Fi network is exact indoors: you\'re there while connected to this very router (its unique BSSID) and gone as soon as you disconnect. Choose below how it combines with the GPS circle.</string>
+    <string name="location_mode_while_here">While I\'m here</string>
+    <string name="location_mode_while_here_desc">Locks when you arrive and unlocks when you leave (at most 24 h).</string>
+    <string name="location_mode_arrival">On arrival</string>
+    <string name="location_mode_arrival_desc">Arriving starts the lock for its normal length.</string>
+    <string name="location_mode_leave">When I leave</string>
+    <string name="location_mode_leave_desc">Leaving starts the lock for its normal length.</string>
+    <string name="location_summary_wifi">Wi-Fi %1$s</string>
+    <string name="meters_value">%1$d m</string>
+    <string name="meters_label">Meters</string>
+    <string name="location_engine_title">Location engine</string>
+    <string name="location_engine_play">Google Play Services</string>
+    <string name="location_engine_play_desc">Geofencing: battery-friendly and reliable in the background. Recommended.</string>
+    <string name="location_engine_builtin">Built-in Android location</string>
+    <string name="location_engine_builtin_desc">No Google Play Services needed, but uses more battery and notices arriving and leaving more slowly.</string>
+    <string name="location_engine_unavailable">Play Services unavailable, using built-in</string>
+    <string name="setup_location">Precise location</string>
+    <string name="location_match_title">How to match</string>
+    <string name="match_gps_only">GPS only</string>
+    <string name="match_gps_only_desc">The circle decides; the Wi-Fi is ignored.</string>
+    <string name="match_wifi_only">Wi-Fi only</string>
+    <string name="match_wifi_only_desc">Connected to the router = here. Exact indoors.</string>
+    <string name="match_gps_and_wifi">GPS and Wi-Fi</string>
+    <string name="match_gps_and_wifi_desc">Both needed. The strictest.</string>
+    <string name="match_gps_or_wifi">GPS or Wi-Fi</string>
+    <string name="match_gps_or_wifi_desc">Either is enough. The most reliable indoors.</string>
+    <string name="location_summary_gps_and_wifi">%1$d m and Wi-Fi %2$s</string>
+    <string name="location_summary_gps_or_wifi">%1$d m or Wi-Fi %2$s</string>
+    <string name="location_mode_slots">During time slots</string>
+    <string name="location_mode_slots_desc">Locked while you\'re here during the time slots below, until each slot ends.</string>
+    <string name="section_time_slots">Time slots</string>
+    <string name="section_during_slot">During a slot</string>
+    <string name="slots_empty">Add at least one time slot.</string>
+    <string name="slots_add">+ Add a time slot</string>
+    <string name="slot_title">Time slot</string>
+    <string name="slots_lock_on_return">Lock when I arrive or come back</string>
+    <string name="slots_lock_on_return_desc">If off, it only locks when a slot starts while you\'re already here.</string>
+    <string name="slots_when_leaving">When I leave during a slot</string>
+    <string name="slots_leave_unlock">Unlock</string>
+    <string name="slots_leave_stay">Stay locked until the slot ends</string>
+    <string name="setup_background_location">Location \"Allow all the time\"</string>
+    <string name="setup_location_services">Location services</string>
+</resources>

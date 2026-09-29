@@ -1,0 +1,372 @@
+package com.fabiantorrestech.lockmyphone_extended.core.lock
+
+import android.app.KeyguardManager
+import android.content.Context
+import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import com.fabiantorrestech.lockmyphone_extended.core.diag.ForegroundLog
+import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndController
+import com.fabiantorrestech.lockmyphone_extended.core.dnd.GrayscaleController
+import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
+import com.fabiantorrestech.lockmyphone_extended.core.enforce.ForegroundPolicy
+import com.fabiantorrestech.lockmyphone_extended.core.enforce.LockAccessibilityService
+import com.fabiantorrestech.lockmyphone_extended.core.enforce.Relocker
+import com.fabiantorrestech.lockmyphone_extended.core.notify.LockNotifications
+import com.fabiantorrestech.lockmyphone_extended.core.service.LockForegroundService
+
+enum class StartResult { STARTED, ADMIN_NOT_ACTIVE }
+
+/**
+ * Connects [LockEngine]'s rules to the Android side: storage, the end alarm, the foreground
+ * service, notifications and relocking. Every entry point (UI, alarms, boot, the accessibility
+ * service, and later the triggers) goes through this class. All methods must be called on the
+ * main thread.
+ */
+class LockController(
+    private val context: Context,
+    private val store: LockStateStore,
+    private val engine: LockEngine,
+    private val relocker: Relocker,
+    private val endScheduler: LockEndScheduler,
+    private val notifications: LockNotifications,
+    private val foregroundPolicy: ForegroundPolicy,
+    private val foregroundLog: ForegroundLog,
+    private val dndController: DndController,
+    private val grayscaleController: GrayscaleController,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+
+    val state get() = store.state
+
+    /**
+     * Called when a lock ends before its scheduled end: an intent stop, a completed early
+     * unlock, or later an NFC end tag. The schedule uses it so it doesn't recreate the lock
+     * for the rest of the same window.
+     */
+    var onLockEndedEarly: (() -> Unit)? = null
+
+    /** Opens the countdown screen (MainActivity). Set by the app container, so this class stays UI-free. */
+    var onShowLockScreen: (() -> Unit)? = null
+
+    /**
+     * The last app seen in front, ignoring system components (keyguard, shade, keyboards). It's
+     * also updated while the keyguard shows, so an app opened over the lock screen (e.g. the
+     * camera) replaces it. In memory only: after a process restart it's unknown, so a paused
+     * pass can't resume and the phone relocks.
+     */
+    private var lastAppInFront: String? = null
+
+    private val _choiceDeadlineMs = MutableStateFlow<Long?>(null)
+
+    /** While the countdown screen waits for the user to pick an app: when it locks again. */
+    val choiceDeadlineMs: StateFlow<Long?> = _choiceDeadlineMs.asStateFlow()
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** The relock scheduled after an unlock. It's cancelled if a pass arrives during the grace period. */
+    private val pendingRelock = Runnable {
+        if (engine.decideOnUnlock(store.current, clock()) == UnlockDecision.RELOCK) {
+            Log.i(TAG, "Grace period over without a pass; relocking")
+            relocker.lockNow()
+        }
+    }
+
+    /** The countdown screen waited long enough without the user picking an app. */
+    private val choiceRelock = Runnable {
+        _choiceDeadlineMs.value = null
+        if (engine.isActive(store.current, clock())) {
+            Log.i(TAG, "No app picked on the lock screen in time; relocking")
+            store.save(engine.clearPass(store.current))
+            relocker.lockNow()
+        }
+    }
+
+    /**
+     * @param bypassDelayMs the early-unlock wait, or null to forbid early unlock for this lock.
+     * @param dndEnabled turn Do Not Disturb on for the length of the lock.
+     * @param dndLevel how strict that Do Not Disturb is.
+     * @param grayscale turn the screen grayscale once, now. It's turned off when the lock ends.
+     * @param resumeMode what happens when the user unlocks again after the screen turned off in
+     *   an allowed app.
+     * @param unlockChoiceSeconds how long the countdown screen waits with
+     *   [UnlockResumeMode.SHOW_LOCK_SCREEN].
+     */
+    fun startLock(
+        durationMs: Long,
+        label: String,
+        allowedPackages: Set<String>,
+        bypassDelayMs: Long?,
+        dndEnabled: Boolean,
+        dndLevel: DndLevel,
+        grayscale: Boolean,
+        resumeMode: UnlockResumeMode,
+        unlockChoiceSeconds: Int,
+    ): StartResult {
+        if (!relocker.isAdminActive()) return StartResult.ADMIN_NOT_ACTIVE
+
+        val newState = engine.start(
+            current = store.current,
+            nowMs = clock(),
+            durationMs = durationMs,
+            label = label,
+            allowedPackages = allowedPackages,
+            bypassDelayMs = bypassDelayMs,
+            dndEnabled = dndEnabled,
+            dndLevel = dndLevel,
+            grayscale = grayscale,
+            resumeMode = resumeMode,
+            unlockChoiceSeconds = unlockChoiceSeconds,
+        )
+        store.save(newState)
+        val session = (newState as LockState.Locked).session
+        endScheduler.schedule(session.effectiveEndMs)
+        if (session.dndEnabled) dndController.enable(session.dndLevel)
+        // Only once, at the start: if the user turns grayscale off mid-lock, it stays off.
+        if (grayscale) grayscaleController.enable()
+        startService()
+        updateNotifications()
+        relocker.lockNow()
+        return StartResult.STARTED
+    }
+
+    /** Starts the early-unlock countdown (from the lock-screen notification). */
+    fun requestBypass() {
+        val newState = engine.requestBypass(store.current, clock()) ?: return
+        store.save(newState)
+        endScheduler.schedule((newState as LockState.Locked).session.effectiveEndMs)
+        Log.i(TAG, "Early unlock requested; ends at ${newState.session.bypassEndsAtMs}")
+        updateNotifications()
+    }
+
+    /** Stops a pending early unlock; the lock runs to its normal end. */
+    fun cancelBypass() {
+        val newState = engine.cancelBypass(store.current) ?: return
+        store.save(newState)
+        endScheduler.schedule((newState as LockState.Locked).session.effectiveEndMs)
+        Log.i(TAG, "Early unlock cancelled")
+        updateNotifications()
+    }
+
+    /**
+     * Called by the foreground service each time the user unlocks the device. The relock waits
+     * a short grace period. When the user taps an allowed app on the lock screen, SystemUI
+     * unlocks first and only then opens our pass activity, so the pass arrives just after
+     * this call.
+     */
+    fun onUserUnlocked() {
+        if (tryResumePass()) return
+        val decision = engine.decideOnUnlock(store.current, clock())
+        Log.i(TAG, "User unlocked; decision=$decision")
+        when (decision) {
+            UnlockDecision.RELOCK -> {
+                // A paused pass that couldn't resume (another app is in front) is used up.
+                store.save(engine.clearPass(store.current))
+                mainHandler.removeCallbacks(pendingRelock)
+                mainHandler.postDelayed(pendingRelock, RELOCK_GRACE_MS)
+            }
+            UnlockDecision.END_LOCK -> endLock()
+            UnlockDecision.NONE -> Unit
+        }
+    }
+
+    /** Grants a pass for an allowed app. Returns false if it isn't allowed or can't be enforced. */
+    fun grantPass(packageName: String): Boolean {
+        if (!LockAccessibilityService.isRunning) return false
+        val newState = engine.grantPass(store.current, clock(), packageName) ?: return false
+        applyPass(newState)
+        return true
+    }
+
+    /** Grants a pass for the allowed-apps picker, which is this app's own screen. */
+    fun grantPickerPass(): Boolean {
+        if (!LockAccessibilityService.isRunning) return false
+        val newState = engine.grantPickerPass(store.current, clock()) ?: return false
+        applyPass(newState)
+        return true
+    }
+
+    private fun applyPass(newState: LockState) {
+        mainHandler.removeCallbacks(pendingRelock)
+        // Picking an app (or opening the picker) on the countdown screen answers its question.
+        cancelLockScreenChoice()
+        store.save(newState)
+        Log.i(TAG, "Pass granted")
+    }
+
+    /** Screen off during a pass pauses it; the next unlock may resume it ([tryResumePass]). */
+    fun onScreenOff() {
+        cancelLockScreenChoice()
+        val paused = engine.pausePass(store.current) ?: return
+        store.save(paused)
+        Log.i(TAG, "Screen off; pass paused (app in front: $lastAppInFront)")
+    }
+
+    /**
+     * Resumes a paused pass if the app in front is still allowed. With
+     * [UnlockResumeMode.SHOW_LOCK_SCREEN] it opens the countdown screen and locks again after
+     * the session's choice time unless the user picks an app. Returns true if it resumed.
+     */
+    private fun tryResumePass(): Boolean {
+        val current = store.current
+        val appInFront = lastAppInFront
+        val decision = engine.decideResume(current, clock(), appInFront, appInFront == context.packageName)
+        if (decision == ResumeDecision.NONE) return false
+
+        mainHandler.removeCallbacks(pendingRelock)
+        val resumed = engine.resumePass(current)
+        store.save(resumed)
+        Log.i(TAG, "Unlocked back into $appInFront; pass resumed ($decision)")
+        if (decision == ResumeDecision.SHOW_LOCK_SCREEN) {
+            val delayMs = (resumed as LockState.Locked).session.unlockChoiceSeconds * 1_000L
+            _choiceDeadlineMs.value = clock() + delayMs
+            mainHandler.removeCallbacks(choiceRelock)
+            mainHandler.postDelayed(choiceRelock, delayMs)
+            onShowLockScreen?.invoke()
+        }
+        return true
+    }
+
+    private fun cancelLockScreenChoice() {
+        mainHandler.removeCallbacks(choiceRelock)
+        _choiceDeadlineMs.value = null
+    }
+
+    /**
+     * Called by the accessibility service each time a window comes to the front. Every event
+     * is also recorded for the diagnostics screen.
+     */
+    fun onForegroundApp(packageName: String, className: String?) {
+        val alwaysAllowed = foregroundPolicy.isAlwaysAllowed(packageName, className)
+        // System components (keyguard, shade, keyboards) sit on top of the real app, so they
+        // don't count. This app does: its picker and countdown screen are pass screens.
+        if (!alwaysAllowed || packageName == context.packageName) lastAppInFront = packageName
+        val decision = if (isKeyguardLocked()) {
+            ForegroundDecision.IGNORE
+        } else {
+            engine.decideOnForeground(store.current, clock(), packageName, alwaysAllowed)
+        }
+        val relock = decision == ForegroundDecision.RELOCK
+        foregroundLog.add(
+            ForegroundLog.Entry(
+                timeMs = clock(),
+                packageName = packageName,
+                className = className,
+                verdict = verdictFor(packageName, alwaysAllowed),
+                relocked = relock,
+            )
+        )
+        if (relock) {
+            Log.i(TAG, "Left allowed apps (foreground=$packageName/$className); relocking")
+            cancelLockScreenChoice()
+            store.save(engine.clearPass(store.current))
+            relocker.lockNow()
+        }
+    }
+
+    private fun verdictFor(packageName: String, alwaysAllowed: Boolean): ForegroundLog.Verdict = when {
+        engine.isAllowed(store.current, packageName) -> ForegroundLog.Verdict.ALLOWED_APP
+        alwaysAllowed -> ForegroundLog.Verdict.ALWAYS_ALLOWED
+        foregroundPolicy.isLauncher(packageName) -> ForegroundLog.Verdict.LAUNCHER
+        else -> ForegroundLog.Verdict.OTHER
+    }
+
+    /** Ends the lock now. Only for the token-checked intent API (and later NFC "end" tags). */
+    fun endLockRemotely() {
+        if (store.current is LockState.Locked) endLock()
+    }
+
+    fun onEndAlarm() {
+        val current = store.current
+        when {
+            engine.isExpired(current, clock()) -> endLock()
+            // The alarm fired early (inexact fallback), so schedule it again.
+            current is LockState.Locked -> endScheduler.schedule(current.session.effectiveEndMs)
+        }
+    }
+
+    /** After a reboot or a process restart, re-arm the lock if it's still active. */
+    fun resume() {
+        val current = store.current
+        when {
+            engine.isExpired(current, clock()) -> endLock()
+            current is LockState.Locked -> {
+                endScheduler.schedule(current.session.effectiveEndMs)
+                // DND state survives reboots on most builds, but turning it on again is harmless.
+                if (current.session.dndEnabled) dndController.enable(current.session.dndLevel)
+                startService()
+                updateNotifications()
+            }
+        }
+    }
+
+    /**
+     * Relocks if a lock is active, no pass is active, and the device is currently unlocked.
+     * This covers cases where the unlock broadcast was missed, e.g. the user unlocked right
+     * after a boot, before the service was running. It also covers the screen coming back on
+     * before the keyguard engaged ("lock after screen timeout"), where a paused pass may resume.
+     */
+    fun enforceIfUnlocked() {
+        if (isKeyguardLocked()) return
+        if (tryResumePass()) return
+        if (engine.decideOnUnlock(store.current, clock()) != UnlockDecision.RELOCK) return
+        Log.i(TAG, "Lock active but device unlocked; relocking")
+        store.save(engine.clearPass(store.current))
+        relocker.lockNow()
+    }
+
+    fun isLockActive(): Boolean = engine.isActive(store.current, clock())
+
+    /**
+     * Refreshes the lock notification: countdown, Phone / Allowed apps (when passes can be
+     * enforced) and the early-unlock button.
+     */
+    fun updateNotifications() {
+        val current = store.current
+        if (current is LockState.Locked && engine.isActive(current, clock())) {
+            notifications.updateStatus(current.session, passesAvailable = LockAccessibilityService.isRunning)
+        }
+    }
+
+    private fun endLock() {
+        val current = store.current
+        val endedEarly = current is LockState.Locked && clock() < current.session.endsAtMs
+        mainHandler.removeCallbacks(pendingRelock)
+        cancelLockScreenChoice()
+        store.save(LockState.Idle)
+        endScheduler.cancel()
+        dndController.disable()
+        grayscaleController.disable()
+        context.stopService(Intent(context, LockForegroundService::class.java))
+        if (endedEarly) onLockEndedEarly?.invoke()
+    }
+
+    private fun isKeyguardLocked(): Boolean =
+        context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
+
+    private fun startService() {
+        try {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, LockForegroundService::class.java),
+            )
+        } catch (e: IllegalStateException) {
+            // Android 12+ can refuse to start a foreground service from the background
+            // (ForegroundServiceStartNotAllowedException). The lock state is already saved,
+            // so the next entry point that is allowed to start the service will pick it up.
+            Log.w(TAG, "Foreground service start refused", e)
+        }
+    }
+
+    private companion object {
+        const val TAG = "LockController"
+
+        /** Long enough for SystemUI to open the pass activity after an unlock, short enough to feel instant. */
+        const val RELOCK_GRACE_MS = 1_000L
+    }
+}
