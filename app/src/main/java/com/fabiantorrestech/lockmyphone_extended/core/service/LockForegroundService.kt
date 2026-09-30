@@ -30,7 +30,7 @@ class LockForegroundService : Service() {
                 Intent.ACTION_USER_PRESENT -> container.lockController.onUserUnlocked()
                 // Backstop: if the screen turns on without a keyguard (lock screen set to
                 // "None", or SystemUI still starting after a boot), there's no USER_PRESENT.
-                Intent.ACTION_SCREEN_ON -> container.lockController.enforceIfUnlocked()
+                Intent.ACTION_SCREEN_ON -> container.lockController.enforceIfUnlocked(allowGate = true)
                 Intent.ACTION_SCREEN_OFF -> container.lockController.onScreenOff()
             }
         }

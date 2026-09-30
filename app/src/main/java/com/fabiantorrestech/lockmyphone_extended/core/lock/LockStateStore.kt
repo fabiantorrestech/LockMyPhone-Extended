@@ -41,6 +41,8 @@ class LockStateStore(context: Context) {
                     putBoolean(KEY_GRAYSCALE, state.session.grayscale)
                     putString(KEY_RESUME_MODE, state.session.resumeMode.name)
                     putInt(KEY_UNLOCK_CHOICE_SECONDS, state.session.unlockChoiceSeconds)
+                    putBoolean(KEY_NFC_UNLOCK_ANY, state.session.nfcUnlock.anyTag)
+                    putStringSet(KEY_NFC_UNLOCK_TAGS, state.session.nfcUnlock.tagIds)
                 }
             }
         }
@@ -69,6 +71,10 @@ class LockStateStore(context: Context) {
                     ?.let { saved -> UnlockResumeMode.entries.firstOrNull { it.name == saved } }
                     ?: UnlockResumeMode.RESUME_APP,
                 unlockChoiceSeconds = prefs.getInt(KEY_UNLOCK_CHOICE_SECONDS, LockSession.DEFAULT_UNLOCK_CHOICE_SECONDS),
+                nfcUnlock = NfcUnlock(
+                    anyTag = prefs.getBoolean(KEY_NFC_UNLOCK_ANY, false),
+                    tagIds = prefs.getStringSet(KEY_NFC_UNLOCK_TAGS, null)?.toSet() ?: emptySet(),
+                ),
             )
         )
     }
@@ -95,5 +101,7 @@ class LockStateStore(context: Context) {
         const val KEY_GRAYSCALE = "grayscale"
         const val KEY_RESUME_MODE = "resume_mode"
         const val KEY_UNLOCK_CHOICE_SECONDS = "unlock_choice_seconds"
+        const val KEY_NFC_UNLOCK_ANY = "nfc_unlock"
+        const val KEY_NFC_UNLOCK_TAGS = "nfc_unlock_tags"
     }
 }

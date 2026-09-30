@@ -34,6 +34,9 @@
     <!-- Paired devices as places: list them, and hear when they connect or disconnect. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- NFC tags that start or end locks. Optional: the app still installs on phones without NFC. -->
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
     <!-- Android 11+ package visibility: list launchable apps, find the dialer, launcher and keyboards. -->
     <queries>
@@ -73,6 +76,22 @@
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- A tag written by this app was tapped: no screen, it acts and closes. -->
+        <activity
+            android:name=".trigger.nfc.NfcTagActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.fabiantorrestech.lockmyphone.tag" />
             </intent-filter>
         </activity>
 

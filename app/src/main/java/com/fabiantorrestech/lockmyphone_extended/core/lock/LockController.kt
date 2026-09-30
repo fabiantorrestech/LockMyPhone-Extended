@@ -46,7 +46,7 @@ class LockController(
 
     /**
      * Called when a lock ends before its scheduled end: an intent stop, a completed early
-     * unlock, or later an NFC end tag. The schedule uses it so it doesn't recreate the lock
+     * unlock, or an NFC end tag. The schedule uses it so it doesn't recreate the lock
      * for the rest of the same window.
      */
     var onLockEndedEarly: (() -> Unit)? = null
@@ -67,6 +67,21 @@ class LockController(
     /** While the countdown screen waits for the user to pick an app: when it locks again. */
     val choiceDeadlineMs: StateFlow<Long?> = _choiceDeadlineMs.asStateFlow()
 
+    private val _gateActive = MutableStateFlow(false)
+
+    /**
+     * True while the NFC gate is open: after an unlock, the countdown screen waits a few seconds
+     * for a tag instead of relocking right away. It closes with [choiceDeadlineMs].
+     */
+    val gateActive: StateFlow<Boolean> = _gateActive.asStateFlow()
+
+    /**
+     * How many seconds the NFC gate stays open for this lock, or null for no gate (no NFC, NFC
+     * off, or no tag that could act on it). Set by the app container, so this class stays
+     * free of NFC and the database.
+     */
+    var nfcGateSeconds: ((LockSession) -> Int?)? = null
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /** The relock scheduled after an unlock. It's cancelled if a pass arrives during the grace period. */
@@ -80,6 +95,7 @@ class LockController(
     /** The countdown screen waited long enough without the user picking an app. */
     private val choiceRelock = Runnable {
         _choiceDeadlineMs.value = null
+        _gateActive.value = false
         if (engine.isActive(store.current, clock())) {
             Log.i(TAG, "No app picked on the lock screen in time; relocking")
             store.save(engine.clearPass(store.current))
@@ -96,6 +112,7 @@ class LockController(
      *   an allowed app.
      * @param unlockChoiceSeconds how long the countdown screen waits with
      *   [UnlockResumeMode.SHOW_LOCK_SCREEN].
+     * @param nfcUnlock which NFC tags set to "End it, if the lock allows NFC" can end this lock.
      */
     fun startLock(
         durationMs: Long,
@@ -107,6 +124,7 @@ class LockController(
         grayscale: Boolean,
         resumeMode: UnlockResumeMode,
         unlockChoiceSeconds: Int,
+        nfcUnlock: NfcUnlock,
     ): StartResult {
         if (!relocker.isAdminActive()) return StartResult.ADMIN_NOT_ACTIVE
 
@@ -122,6 +140,7 @@ class LockController(
             grayscale = grayscale,
             resumeMode = resumeMode,
             unlockChoiceSeconds = unlockChoiceSeconds,
+            nfcUnlock = nfcUnlock,
         )
         store.save(newState)
         val session = (newState as LockState.Locked).session
@@ -168,7 +187,7 @@ class LockController(
                 // A paused pass that couldn't resume (another app is in front) is used up.
                 store.save(engine.clearPass(store.current))
                 mainHandler.removeCallbacks(pendingRelock)
-                mainHandler.postDelayed(pendingRelock, RELOCK_GRACE_MS)
+                if (!tryOpenGate()) mainHandler.postDelayed(pendingRelock, RELOCK_GRACE_MS)
             }
             UnlockDecision.END_LOCK -> endLock()
             UnlockDecision.NONE -> Unit
@@ -201,7 +220,13 @@ class LockController(
 
     /** Screen off during a pass pauses it; the next unlock may resume it ([tryResumePass]). */
     fun onScreenOff() {
+        // The gate only lasts for this unlock: turning the screen off closes it for good.
+        val gateWasOpen = _gateActive.value
         cancelLockScreenChoice()
+        if (gateWasOpen) {
+            store.save(engine.clearPass(store.current))
+            return
+        }
         val paused = engine.pausePass(store.current) ?: return
         store.save(paused)
         Log.i(TAG, "Screen off; pass paused (app in front: $lastAppInFront)")
@@ -235,6 +260,28 @@ class LockController(
     private fun cancelLockScreenChoice() {
         mainHandler.removeCallbacks(choiceRelock)
         _choiceDeadlineMs.value = null
+        _gateActive.value = false
+    }
+
+    /**
+     * Instead of relocking, opens the countdown screen for a few seconds with the NFC reader on,
+     * so a tag can end the lock or start its early-unlock wait. Doing nothing relocks
+     * ([choiceRelock]); the allowed apps and Phone work there as usual. Returns false (relock
+     * as usual) when no tag could act on this lock.
+     */
+    private fun tryOpenGate(): Boolean {
+        val current = store.current as? LockState.Locked ?: return false
+        val seconds = nfcGateSeconds?.invoke(current.session) ?: return false
+        val opened = engine.grantPickerPass(current, clock()) ?: return false
+        store.save(opened)
+        val delayMs = seconds * 1_000L
+        _choiceDeadlineMs.value = clock() + delayMs
+        _gateActive.value = true
+        mainHandler.removeCallbacks(choiceRelock)
+        mainHandler.postDelayed(choiceRelock, delayMs)
+        Log.i(TAG, "Unlocked during a lock; NFC gate open for $seconds s")
+        onShowLockScreen?.invoke()
+        return true
     }
 
     /**
@@ -276,7 +323,7 @@ class LockController(
         else -> ForegroundLog.Verdict.OTHER
     }
 
-    /** Ends the lock now. Only for the token-checked intent API (and later NFC "end" tags). */
+    /** Ends the lock now. Only for the token-checked intent API and NFC end tags. */
     fun endLockRemotely() {
         if (store.current is LockState.Locked) endLock()
     }
@@ -310,13 +357,17 @@ class LockController(
      * This covers cases where the unlock broadcast was missed, e.g. the user unlocked right
      * after a boot, before the service was running. It also covers the screen coming back on
      * before the keyguard engaged ("lock after screen timeout"), where a paused pass may resume.
+     *
+     * @param allowGate open the NFC gate instead of relocking, if one applies. Only for the screen
+     *   turning on: right after a lock starts, the keyguard may not show yet, and that isn't an unlock.
      */
-    fun enforceIfUnlocked() {
+    fun enforceIfUnlocked(allowGate: Boolean = false) {
         if (isKeyguardLocked()) return
         if (tryResumePass()) return
         if (engine.decideOnUnlock(store.current, clock()) != UnlockDecision.RELOCK) return
-        Log.i(TAG, "Lock active but device unlocked; relocking")
         store.save(engine.clearPass(store.current))
+        if (allowGate && tryOpenGate()) return
+        Log.i(TAG, "Lock active but device unlocked; relocking")
         relocker.lockNow()
     }
 

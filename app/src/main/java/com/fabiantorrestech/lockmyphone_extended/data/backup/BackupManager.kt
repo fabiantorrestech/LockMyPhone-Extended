@@ -29,10 +29,12 @@ data class RestoreWarnings(
     val calendarAccessMissing: Boolean,
     val alarmTriggerCount: Int,
     val calendarTriggerCount: Int,
+    /** NFC tags work on any phone, but only one with NFC hardware. */
+    val nfcTagsWithoutNfc: Boolean,
 )
 
 /**
- * Backs up everything (settings, profiles, schedules, alarm/location/calendar triggers) to a
+ * Backs up everything (settings, profiles, schedules, alarm/location/calendar triggers, NFC tags) to a
  * folder the user picked, restores from a backup file (replacing everything), and runs the
  * auto backup: 10 minutes after the last change, then idle until the next change.
  * The stop token is never included.
@@ -112,6 +114,7 @@ class BackupManager(
             calendarAccessMissing = contents.calendarTriggers.isNotEmpty() && !calendarReader.hasPermission(),
             alarmTriggerCount = contents.alarmTriggers.size,
             calendarTriggerCount = contents.calendarTriggers.size,
+            nfcTagsWithoutNfc = contents.nfcTags.isNotEmpty() && android.nfc.NfcAdapter.getDefaultAdapter(context) == null,
         )
     }
 
@@ -126,6 +129,7 @@ class BackupManager(
                 locations = contents.locations,
                 slots = contents.locationSlots,
                 calendarTriggers = calendars,
+                nfcTags = contents.nfcTags,
             )
         }
         settings().restore(contents.settings)
@@ -155,6 +159,7 @@ class BackupManager(
             locationSlots = database.locationSlotDao().getAll(),
             calendarTriggers = calendarTriggers,
             calendars = calendarReader.calendars().filter { it.id.toString() in usedCalendarIds },
+            nfcTags = database.nfcTagDao().getAll(),
         )
     }
 
@@ -211,7 +216,7 @@ class BackupManager(
         private const val AUTO_REQUEST_CODE = 4201
         private val FILE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss")
         private val WATCHED_TABLES = arrayOf(
-            "profiles", "schedules", "alarm_triggers", "location_triggers", "location_slots", "calendar_triggers",
+            "profiles", "schedules", "alarm_triggers", "location_triggers", "location_slots", "calendar_triggers", "nfc_tags",
         )
     }
 }

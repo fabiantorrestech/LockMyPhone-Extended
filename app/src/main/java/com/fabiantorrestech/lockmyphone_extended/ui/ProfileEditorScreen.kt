@@ -18,6 +18,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.fabiantorrestech.lockmyphone_extended.R
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
 
 /**
  * Creates or edits a profile, or the Lock defaults. The draft lives in the caller, so it
@@ -28,6 +29,7 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
  * @param error a message to show, e.g. a duplicate name.
  * @param isDefaults edits the Lock defaults instead of a profile: no name, icon or delete.
  * @param presetsSec one-tap lock lengths from Settings.
+ * @param nfcTags the registered tags, to choose which can end this lock.
  */
 @Composable
 fun ProfileEditorScreen(
@@ -40,6 +42,7 @@ fun ProfileEditorScreen(
     onDelete: () -> Unit,
     onBack: () -> Unit,
     presetsSec: List<Long>,
+    nfcTags: List<NfcTag>,
     modifier: Modifier = Modifier,
     isDefaults: Boolean = false,
 ) {
@@ -82,6 +85,7 @@ fun ProfileEditorScreen(
         LockSettingsSections(
             settings = draft.toLockSettings(),
             presetsSec = presetsSec,
+            nfcTags = nfcTags,
             lengthTitle = stringResource(R.string.profile_default_duration),
             onChange = { onDraftChange(draft.withLockSettings(it)) },
             onEditAllowedApps = onEditAllowedApps,
@@ -116,6 +120,7 @@ private fun LockProfile.toLockSettings() = LockSettings(
     grayscale = grayscale,
     resumeMode = unlockResumeMode,
     choiceSeconds = unlockChoiceSeconds,
+    nfcUnlock = nfcUnlock,
 )
 
 /** The allowed apps themselves are edited on their own screen, so only their count comes back here. */
@@ -128,6 +133,8 @@ private fun LockProfile.withLockSettings(settings: LockSettings) = copy(
     grayscale = settings.grayscale,
     unlockResumeMode = settings.resumeMode,
     unlockChoiceSeconds = settings.choiceSeconds,
+    nfcUnlockEnabled = settings.nfcUnlock.anyTag,
+    nfcUnlockTagIds = settings.nfcUnlock.tagIds,
 )
 
 private const val MAX_NAME_LENGTH = 40

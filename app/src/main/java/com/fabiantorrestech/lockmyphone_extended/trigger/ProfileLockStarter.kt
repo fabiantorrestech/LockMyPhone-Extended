@@ -8,7 +8,7 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 
 /**
  * Starts a lock from a profile or from the Quick lock settings. Every trigger (manual,
- * schedule, intent, and later NFC and alarm) goes through here, so they all apply settings
+ * schedule, intent, NFC and alarm) goes through here, so they all apply settings
  * the same way. Main thread only.
  */
 class ProfileLockStarter(
@@ -29,6 +29,7 @@ class ProfileLockStarter(
             grayscale = profile.grayscale,
             resumeMode = profile.unlockResumeMode,
             unlockChoiceSeconds = profile.unlockChoiceSeconds,
+            nfcUnlock = profile.nfcUnlock,
         )
 
     /**
@@ -51,6 +52,7 @@ class ProfileLockStarter(
             grayscale = settings.quickGrayscale.value,
             resumeMode = settings.quickResumeMode.value,
             unlockChoiceSeconds = settings.quickChoiceSeconds.value,
+            nfcUnlock = settings.quickNfcUnlock.value,
         )
     }
 }

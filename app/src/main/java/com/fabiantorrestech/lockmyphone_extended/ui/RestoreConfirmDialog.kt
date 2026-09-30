@@ -48,6 +48,7 @@ fun RestoreConfirmDialog(
                         contents.alarmTriggers.size,
                         contents.locations.size,
                         contents.calendarTriggers.size,
+                        contents.nfcTags.size,
                     )
                 )
                 Text(stringResource(R.string.restore_replaces), color = MaterialTheme.colorScheme.error)
@@ -63,6 +64,9 @@ fun RestoreConfirmDialog(
                         },
                         style = MaterialTheme.typography.bodySmall,
                     )
+                }
+                if (warnings.nfcTagsWithoutNfc) {
+                    Text(stringResource(R.string.restore_warn_no_nfc), style = MaterialTheme.typography.bodySmall)
                 }
                 if (warnings.alarmTriggerCount > 0) {
                     Text(stringResource(R.string.restore_warn_alarms), style = MaterialTheme.typography.bodySmall)

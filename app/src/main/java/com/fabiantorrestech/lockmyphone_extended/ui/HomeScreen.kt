@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.FlowRow
 import com.fabiantorrestech.lockmyphone_extended.data.MAX_DURATION_PRESETS
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
 import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.BatteryAlert
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.EventBusy
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationEngineChoice
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
@@ -123,6 +125,10 @@ fun HomeScreen(
     onEditLocation: (LocationTrigger?) -> Unit,
     calendarTriggers: List<CalendarTrigger>,
     onEditCalendar: (CalendarTrigger?) -> Unit,
+    nfcTags: List<NfcTag>,
+    onEditNfcTag: (NfcTag?) -> Unit,
+    nfcGateSeconds: Int,
+    onNfcGateSecondsChange: (Int) -> Unit,
     calendarSkipDeclined: Boolean,
     calendarSkipFree: Boolean,
     onCalendarDefaultsChange: (skipDeclined: Boolean, skipFree: Boolean) -> Unit,
@@ -175,7 +181,7 @@ fun HomeScreen(
                         if (!setup.adminActive || !setup.accessibilityEnabled) {
                             SetupBanner(onOpenSettings = { onTabChange(HomeTab.SETTINGS) })
                         }
-                        QuickLockSection(setup.adminActive, quickLock, presetsSec, startActions)
+                        QuickLockSection(setup.adminActive, quickLock, presetsSec, nfcTags, startActions)
                     }
                     HomeTab.PROFILES -> {
                         if (!setup.adminActive || !setup.accessibilityEnabled) {
@@ -201,6 +207,7 @@ fun HomeScreen(
                         AlarmTriggersCard(alarmTriggers, profiles, appLabel, onEditAlarmTrigger, reorderActions.onReorderTriggers, granted)
                         LocationsCard(locations, profiles, onEditLocation, reorderActions.onReorderLocations, granted)
                         CalendarCard(calendarTriggers, profiles, onEditCalendar, reorderActions.onReorderCalendars, granted)
+                        NfcTagsCard(nfcTags, profiles, setup.hasNfc, onEditNfcTag, reorderActions.onReorderNfcTags, granted)
                     }
                     HomeTab.SETTINGS -> {
                         SetupChecklist(setup, setupActions)
@@ -212,6 +219,7 @@ fun HomeScreen(
                         LocationEngineCard(locationEngine, playServicesAvailable, onLocationEngineChange)
                         BeaconModeCard(beaconMode, onBeaconModeChange, setupActions.onAllowBackground)
                         CalendarDefaultsCard(calendarSkipDeclined, calendarSkipFree, onCalendarDefaultsChange)
+                        if (setup.hasNfc) NfcGateCard(nfcGateSeconds, onNfcGateSecondsChange)
                         IntentApiCard(intentApi, intentApiActions)
                         DeviceCard(deviceProfileName, onChangeDevice)
                         AppearanceCard(themeMode, onThemeModeChange, showPickerIcons, onShowPickerIconsChange)
@@ -294,6 +302,85 @@ private fun LocationsCard(
         }
     }
 }
+
+/** NFC tags, with icons and drag to reorder. */
+@Composable
+private fun NfcTagsCard(
+    tags: List<NfcTag>,
+    profiles: List<LockProfile>,
+    hasNfc: Boolean,
+    onEdit: (NfcTag?) -> Unit,
+    onReorder: (List<NfcTag>) -> Unit,
+    granted: Set<AppPermission>,
+) {
+    val context = LocalContext.current
+    val profilesById = remember(profiles) { profiles.associateBy { it.id } }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.nfc_tags_title), style = MaterialTheme.typography.titleMedium)
+            when {
+                !hasNfc -> Text(stringResource(R.string.nfc_no_hardware), style = MaterialTheme.typography.bodySmall)
+                tags.isEmpty() -> Text(stringResource(R.string.nfc_tags_empty), style = MaterialTheme.typography.bodySmall)
+            }
+            ReorderableColumn(tags, key = { it.id }, onReorder = onReorder) { tag, _ ->
+                val profile = tag.profileId?.let { profilesById[it] }
+                ListRow(
+                    title = tag.name,
+                    subtitle = withPauseNote(
+                        formatNfcTag(context, tag, profile?.name),
+                        pauseNote(context, PermissionNeeds.check(PermissionNeeds.forNfcTag, granted)),
+                    ),
+                    onClick = { onEdit(tag) },
+                    leading = { ProfileIcon(automationIcon(tag.icon, profile), tag.name) },
+                )
+            }
+            OutlinedButton(onClick = { onEdit(null) }, modifier = Modifier.fillMaxWidth(), enabled = hasNfc) {
+                Text(stringResource(R.string.nfc_tag_new))
+            }
+        }
+    }
+}
+
+/** Settings → NFC tags: how long the countdown screen waits for a tag after an unlock. */
+@Composable
+private fun NfcGateCard(gateSeconds: Int, onChange: (Int) -> Unit) {
+    var editing by remember { mutableStateOf(false) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Text(
+                stringResource(R.string.nfc_tags_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            SettingsRow(
+                icon = Icons.Filled.Nfc,
+                title = stringResource(R.string.nfc_gate_time),
+                summary = stringResource(R.string.seconds_value, gateSeconds),
+                onClick = { editing = true },
+            )
+            Text(
+                stringResource(R.string.nfc_gate_time_hint),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+    }
+    if (editing) {
+        NumberDialog(
+            title = stringResource(R.string.nfc_gate_time),
+            label = stringResource(R.string.start_seconds_label),
+            initial = gateSeconds,
+            range = NFC_GATE_SECONDS_RANGE,
+            onConfirm = {
+                onChange(it)
+                editing = false
+            },
+            onDismiss = { editing = false },
+        )
+    }
+}
+
+private val NFC_GATE_SECONDS_RANGE = 5..30
 
 /** The backup settings as shown. */
 data class BackupUiState(
@@ -574,6 +661,7 @@ class ReorderActions(
     val onReorderTriggers: (List<AlarmTrigger>) -> Unit,
     val onReorderLocations: (List<LocationTrigger>) -> Unit,
     val onReorderCalendars: (List<CalendarTrigger>) -> Unit,
+    val onReorderNfcTags: (List<NfcTag>) -> Unit,
 )
 
 /** Space a FloatingActionButton (56 dp + 16 dp margin) needs at the end of a scrolling list. */
@@ -712,6 +800,10 @@ data class SetupStatus(
     /** The "Nearby devices" scan permission alone (without location), for Settings → Permissions. */
     val nearbyScanGranted: Boolean = false,
     val bluetoothAdvertiseGranted: Boolean = false,
+    /** True if any NFC tag exists, so the "NFC on" row matters. */
+    val nfcTagsExist: Boolean = false,
+    val hasNfc: Boolean = false,
+    val nfcOn: Boolean = false,
 )
 
 /** What each "Enable" button in the setup checklist does. */
@@ -729,6 +821,7 @@ class SetupActions(
     val onGrantCalendar: () -> Unit,
     val onGrantBluetoothScan: () -> Unit,
     val onGrantBluetoothConnect: () -> Unit,
+    val onTurnOnNfc: () -> Unit,
 )
 
 /** The permissions checklist. Shared by the home screen and onboarding. */
@@ -748,6 +841,9 @@ fun SetupChecklist(setup: SetupStatus, actions: SetupActions) {
             }
             if (setup.beaconPlacesExist) {
                 SetupRow(stringResource(R.string.setup_nearby_devices), setup.bluetoothScanGranted, actions.onGrantBluetoothScan)
+            }
+            if (setup.nfcTagsExist && setup.hasNfc) {
+                SetupRow(stringResource(R.string.setup_nfc), setup.nfcOn, actions.onTurnOnNfc)
             }
             if (setup.btDevicePlacesExist) {
                 SetupRow(stringResource(R.string.setup_paired_devices), setup.bluetoothConnectGranted, actions.onGrantBluetoothConnect)
@@ -1006,7 +1102,13 @@ class StartLockActions(
  * defaults back in.
  */
 @Composable
-private fun QuickLockSection(enabled: Boolean, quickLock: LockSettings, presetsSec: List<Long>, actions: StartLockActions) {
+private fun QuickLockSection(
+    enabled: Boolean,
+    quickLock: LockSettings,
+    presetsSec: List<Long>,
+    nfcTags: List<NfcTag>,
+    actions: StartLockActions,
+) {
     var showConfirm by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
 
@@ -1033,6 +1135,7 @@ private fun QuickLockSection(enabled: Boolean, quickLock: LockSettings, presetsS
         LockSettingsSections(
             settings = quickLock,
             presetsSec = presetsSec,
+            nfcTags = nfcTags,
             lengthTitle = stringResource(R.string.lock_length),
             onChange = actions.onQuickSettingsChange,
             onEditAllowedApps = actions.onEditQuickApps,

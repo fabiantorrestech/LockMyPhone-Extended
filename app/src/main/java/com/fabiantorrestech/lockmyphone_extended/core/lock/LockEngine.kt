@@ -40,6 +40,7 @@ class LockEngine {
      * - grayscale is on if either lock wants it
      * - showing the lock screen after an unlock beats going straight back to the app, and the
      *   shorter choice time wins
+     * - NFC tags can end it only if both locks allow that tag
      *
      * The allowed apps are merged.
      *
@@ -57,6 +58,7 @@ class LockEngine {
         grayscale: Boolean,
         resumeMode: UnlockResumeMode,
         unlockChoiceSeconds: Int,
+        nfcUnlock: NfcUnlock = NfcUnlock.NONE,
     ): LockState {
         require(durationMs > 0) { "durationMs must be positive" }
         require(bypassDelayMs == null || bypassDelayMs > 0) { "bypassDelayMs must be positive" }
@@ -75,6 +77,7 @@ class LockEngine {
                     grayscale = grayscale,
                     resumeMode = resumeMode,
                     unlockChoiceSeconds = unlockChoiceSeconds,
+                    nfcUnlock = nfcUnlock,
                 )
             )
             is LockState.Locked -> {
@@ -101,6 +104,7 @@ class LockEngine {
                         grayscale = old.grayscale || grayscale,
                         resumeMode = stricterResumeMode(old.resumeMode, resumeMode),
                         unlockChoiceSeconds = minOf(old.unlockChoiceSeconds, unlockChoiceSeconds),
+                        nfcUnlock = old.nfcUnlock.stricter(nfcUnlock),
                     )
                 )
             }

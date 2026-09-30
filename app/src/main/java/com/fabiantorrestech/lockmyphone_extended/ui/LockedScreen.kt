@@ -33,6 +33,8 @@ import java.util.Date
  *   isn't bound, because a pass couldn't be enforced then.
  * @param choiceDeadlineMs set after an unlock back into an allowed app ("Show the lock screen"):
  *   the phone locks again at this time unless the user picks an app.
+ * @param nfcGate the NFC gate is open: a tag can end the lock (or start its early-unlock wait)
+ *   before [choiceDeadlineMs].
  */
 @Composable
 fun LockedScreen(
@@ -42,6 +44,7 @@ fun LockedScreen(
     onOpenPhone: () -> Unit,
     modifier: Modifier = Modifier,
     choiceDeadlineMs: Long? = null,
+    nfcGate: Boolean = false,
 ) {
     // A pending early unlock ends the lock sooner than the scheduled end.
     val endMs = session.effectiveEndMs
@@ -67,6 +70,13 @@ fun LockedScreen(
             style = MaterialTheme.typography.displayMedium,
         )
         Text(stringResource(R.string.locked_until, endTime))
+        if (nfcGate) {
+            Text(
+                stringResource(R.string.nfc_gate_prompt),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         if (choiceDeadlineMs != null) {
             val secondsLeft = ((choiceDeadlineMs - now + 999) / 1_000).coerceAtLeast(0)
             Text(

@@ -27,7 +27,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -39,7 +41,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import android.nfc.Tag
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
+import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.NfcRules
+import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.NfcTagIo
+import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.TagWriteResult
+import com.fabiantorrestech.lockmyphone_extended.ui.NfcTagEditorScreen
+import com.fabiantorrestech.lockmyphone_extended.ui.TagScanMode
 import com.fabiantorrestech.lockmyphone_extended.core.enforce.LockAccessibilityService
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockState
 import com.fabiantorrestech.lockmyphone_extended.core.lock.StartResult
@@ -120,7 +130,7 @@ import kotlinx.coroutines.launch
 /** The screens reachable while no lock is active. */
 private enum class Screen {
     HOME, DEVICE, DIAGNOSTICS, PROFILE, PROFILE_APPS, SCHEDULE, QUICK_APPS, ALARM_TRIGGER, ALARM_APP, DEFAULTS, DEFAULT_APPS,
-    LOCATION, CALENDAR, PERMISSIONS,
+    LOCATION, CALENDAR, PERMISSIONS, NFC_TAG,
 }
 
 // Play Services pulls in an old androidx.fragment, which trips this lint check. This activity is a
@@ -223,6 +233,7 @@ class MainActivity : ComponentActivity() {
             onGrantCalendar = { calendarPermissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
             onGrantBluetoothScan = ::requestBluetoothScan,
             onGrantBluetoothConnect = ::requestBluetoothConnect,
+            onTurnOnNfc = ::openNfcSettings,
         )
     }
 
@@ -243,14 +254,19 @@ class MainActivity : ComponentActivity() {
                     val contentModifier = Modifier.padding(innerPadding)
                     val locked = lockState
                     when {
-                        locked is LockState.Locked -> LockedScreen(
-                            session = locked.session,
-                            passButtonsEnabled = LockAccessibilityService.isRunning,
-                            onOpenAllowedApps = { startActivity(PassActivity.pickerIntent(this)) },
-                            onOpenPhone = { startActivity(PassActivity.dialIntent(this)) },
-                            modifier = contentModifier,
-                            choiceDeadlineMs = container.lockController.choiceDeadlineMs.collectAsState().value,
-                        )
+                        locked is LockState.Locked -> {
+                            val gateOpen by container.lockController.gateActive.collectAsState()
+                            if (gateOpen) NfcReader(::onGateTag)
+                            LockedScreen(
+                                session = locked.session,
+                                passButtonsEnabled = LockAccessibilityService.isRunning,
+                                onOpenAllowedApps = { startActivity(PassActivity.pickerIntent(this)) },
+                                onOpenPhone = { startActivity(PassActivity.dialIntent(this)) },
+                                modifier = contentModifier,
+                                choiceDeadlineMs = container.lockController.choiceDeadlineMs.collectAsState().value,
+                                nfcGate = gateOpen,
+                            )
+                        }
                         !onboardingDone -> OnboardingScreen(
                             deviceProfilePicker = { DeviceProfileSection() },
                             setupChecklist = { SetupChecklist(setupStatus.value, setupActions) },
@@ -286,6 +302,8 @@ class MainActivity : ComponentActivity() {
         var currentWifi by remember { mutableStateOf<ConnectedWifi?>(null) }
         var slotDrafts by remember { mutableStateOf<List<LocationSlot>>(emptyList()) }
         var calendarDraft by remember { mutableStateOf<CalendarTrigger?>(null) }
+        var nfcDraft by remember { mutableStateOf<NfcTag?>(null) }
+        var tagScan by remember { mutableStateOf<TagScanMode?>(null) }
         var deviceCalendars by remember { mutableStateOf<List<DeviceCalendar>>(emptyList()) }
         var nextCalendarMatch by remember { mutableStateOf<CalendarWindow?>(null) }
         // The Lock defaults page edits a profile-shaped draft (no name, never saved as a profile).
@@ -301,6 +319,8 @@ class MainActivity : ComponentActivity() {
         val locationManager = container.locationTriggerManager
         val calendarManager = container.calendarTriggerManager
         val calendarTriggers by container.database.calendarTriggerDao().observeAll().collectAsState(initial = emptyList())
+        val nfcTags by container.database.nfcTagDao().observeAll().collectAsState(initial = emptyList())
+        val nfcGateSeconds by container.settingsStore.nfcGateSeconds.collectAsState()
         val calendarSkipDeclined by container.settingsStore.calendarSkipDeclined.collectAsState()
         val calendarSkipFree by container.settingsStore.calendarSkipFree.collectAsState()
         val backupFolder by container.settingsStore.backupFolderUri.collectAsState()
@@ -328,6 +348,7 @@ class MainActivity : ComponentActivity() {
         val quickResumeMode by container.settingsStore.quickResumeMode.collectAsState()
         val quickChoiceSeconds by container.settingsStore.quickChoiceSeconds.collectAsState()
         val quickGrayscale by container.settingsStore.quickGrayscale.collectAsState()
+        val quickNfcUnlock by container.settingsStore.quickNfcUnlock.collectAsState()
         val presetsSec by container.settingsStore.durationPresetsSec.collectAsState()
         val alarmDayStart by container.settingsStore.alarmDayStartMinutes.collectAsState()
         val firstAlarmApps = remember {
@@ -344,6 +365,8 @@ class MainActivity : ComponentActivity() {
             profileError = null
             scheduleDraft = null
             alarmDraft = null
+            nfcDraft = null
+            tagScan = null
             container.alarmLearning.cancel()
         }
 
@@ -403,6 +426,7 @@ class MainActivity : ComponentActivity() {
                         onReorderTriggers = { list -> scope.launch { container.database.alarmTriggerDao().reorder(list.map { it.id }) } },
                         onReorderLocations = { list -> scope.launch { container.database.locationTriggerDao().reorder(list.map { it.id }) } },
                         onReorderCalendars = { list -> scope.launch { container.database.calendarTriggerDao().reorder(list.map { it.id }) } },
+                        onReorderNfcTags = { list -> scope.launch { container.database.nfcTagDao().reorder(list.map { it.id }) } },
                     )
                 },
                 appLabel = container.appCatalog::label,
@@ -456,6 +480,14 @@ class MainActivity : ComponentActivity() {
                     scope.launch { deviceCalendars = withContext(Dispatchers.IO) { calendarManager.reader.calendars() } }
                     screen = Screen.CALENDAR
                 },
+                nfcTags = nfcTags,
+                onEditNfcTag = { existing ->
+                    nfcDraft = existing ?: NfcTag(name = "", uid = "")
+                    tagScan = null
+                    screen = Screen.NFC_TAG
+                },
+                nfcGateSeconds = nfcGateSeconds,
+                onNfcGateSecondsChange = container.settingsStore::setNfcGateSeconds,
                 calendarSkipDeclined = calendarSkipDeclined,
                 calendarSkipFree = calendarSkipFree,
                 onCalendarDefaultsChange = container.settingsStore::setCalendarDefaults,
@@ -526,6 +558,7 @@ class MainActivity : ComponentActivity() {
                     grayscale = quickGrayscale,
                     resumeMode = quickResumeMode,
                     choiceSeconds = quickChoiceSeconds,
+                    nfcUnlock = quickNfcUnlock,
                 ),
                 presetsSec = presetsSec,
                 onPresetsChange = container.settingsStore::setDurationPresets,
@@ -550,6 +583,48 @@ class MainActivity : ComponentActivity() {
                 },
                 modifier = modifier,
             )
+            Screen.NFC_TAG -> nfcDraft?.let { draft ->
+                // The reader stays on for the whole editor, so a written tag held to the phone
+                // while not scanning is ignored instead of starting its lock.
+                NfcReader { tag ->
+                    tagScan?.let { mode ->
+                        onEditorTag(tag, mode, draft, nfcTags) { uid, code ->
+                            nfcDraft = nfcDraft?.copy(uid = uid, secret = code)
+                            tagScan = null
+                        }
+                    }
+                }
+                NfcTagEditorScreen(
+                    draft = draft,
+                    profiles = profiles,
+                    hasNfc = setupStatus.value.hasNfc,
+                    nfcOn = setupStatus.value.nfcOn,
+                    scanning = tagScan,
+                    presetsSec = presetsSec,
+                    onOpenNfcSettings = ::openNfcSettings,
+                    onScan = { tagScan = it },
+                    onDraftChange = { nfcDraft = it },
+                    onSave = {
+                        scope.launch {
+                            val dao = container.database.nfcTagDao()
+                            try {
+                                if (draft.id == 0L) dao.insertLast(draft) else dao.update(draft)
+                                goHome()
+                            } catch (e: SQLiteConstraintException) {
+                                Toast.makeText(this@MainActivity, R.string.nfc_tag_taken_generic, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    onDelete = {
+                        scope.launch {
+                            container.database.nfcTagDao().delete(draft)
+                            goHome()
+                        }
+                    },
+                    onBack = goHome,
+                    modifier = modifier,
+                )
+            }
             Screen.CALENDAR -> calendarDraft?.let { draft ->
                 CalendarEditorScreen(
                     draft = draft,
@@ -736,6 +811,7 @@ class MainActivity : ComponentActivity() {
                 ProfileEditorScreen(
                     draft = draft,
                     presetsSec = presetsSec,
+                    nfcTags = nfcTags,
                     canDelete = draft.id != 0L && profiles.size > 1,
                     error = profileError,
                     onDraftChange = {
@@ -768,6 +844,7 @@ class MainActivity : ComponentActivity() {
                 ProfileEditorScreen(
                     draft = draft,
                     presetsSec = presetsSec,
+                    nfcTags = nfcTags,
                     canDelete = false,
                     error = null,
                     onDraftChange = { defaultsDraft = it },
@@ -842,6 +919,7 @@ class MainActivity : ComponentActivity() {
                     alarmTriggers = alarmTriggers,
                     places = locations,
                     calendarTriggers = calendarTriggers,
+                    nfcTags = nfcTags,
                     quickUsesDnd = quickDnd || quickGrayscale,
                     beaconMode = beaconModeEnabled,
                 ),
@@ -921,6 +999,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // The "NFC on" row only matters once a tag exists.
+        LaunchedEffect(nfcTags) {
+            val exist = nfcTags.isNotEmpty()
+            if (setupStatus.value.nfcTagsExist != exist) setupStatus.value = setupStatus.value.copy(nfcTagsExist = exist)
+        }
+
         // The notification-access row only matters once an alarm trigger exists.
         LaunchedEffect(alarmTriggers) {
             val exist = alarmTriggers.isNotEmpty()
@@ -945,6 +1029,7 @@ class MainActivity : ComponentActivity() {
                 Screen.DEFAULTS, Screen.DEFAULT_APPS -> defaultsDraft == null
                 Screen.LOCATION -> locationDraft == null
                 Screen.CALENDAR -> calendarDraft == null
+                Screen.NFC_TAG -> nfcDraft == null
                 else -> false
             }
             if (missingDraft) screen = Screen.HOME
@@ -1027,6 +1112,86 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshSetupStatus()
+        applyNfcReader()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        NfcTagIo.setReader(this, null)
+    }
+
+    /** The screen currently reading NFC tags (the gate, or the tag editor), or null. */
+    private var nfcReaderCallback: ((Tag) -> Unit)? = null
+
+    /** Reader mode only works while this activity is in front, so it's re-applied in onResume. */
+    private fun applyNfcReader() {
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) NfcTagIo.setReader(this, nfcReaderCallback)
+    }
+
+    /** Keeps the NFC reader on while this is shown; each tag goes to [onTag] on the main thread. */
+    @Composable
+    private fun NfcReader(onTag: (Tag) -> Unit) {
+        val currentOnTag by rememberUpdatedState(onTag)
+        DisposableEffect(Unit) {
+            nfcReaderCallback = { tag -> runOnUiThread { currentOnTag(tag) } }
+            applyNfcReader()
+            onDispose {
+                nfcReaderCallback = null
+                applyNfcReader()
+            }
+        }
+    }
+
+    /** A tag tapped on the NFC gate: it may end the lock or start its early-unlock wait. */
+    private fun onGateTag(tag: Tag) {
+        val uid = NfcRules.uidHex(tag.id)
+        val code = NfcTagIo.readCode(tag)
+        container.appScope.launch {
+            val message = container.nfcTagHandler.onTagTapped(uid, code, readInApp = true)
+            Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * A tag held to the phone in the tag editor. Scanning registers its ID (and keeps the code of
+     * a tag this app wrote before); writing puts this app's record with the tag's code on it. A
+     * tag already written keeps its code, so writing again never breaks it. A tag registered
+     * elsewhere, or a different tag than the one being edited, is refused. [onRegistered] gets
+     * the tag's ID and code (null if it has none) when it's done.
+     */
+    private fun onEditorTag(
+        tag: Tag,
+        mode: TagScanMode,
+        draft: NfcTag,
+        allTags: List<NfcTag>,
+        onRegistered: (uid: String, code: String?) -> Unit,
+    ) {
+        val uid = NfcRules.uidHex(tag.id)
+        val owner = allTags.firstOrNull { it.uid == uid && it.id != draft.id }
+        when {
+            owner != null -> Toast.makeText(this, getString(R.string.nfc_tag_taken, owner.name), Toast.LENGTH_LONG).show()
+            mode == TagScanMode.SCAN -> onRegistered(uid, NfcTagIo.readCode(tag))
+            draft.uid.isNotEmpty() && draft.uid != uid ->
+                Toast.makeText(this, R.string.nfc_write_other_tag, Toast.LENGTH_LONG).show()
+            else -> lifecycleScope.launch {
+                val code = draft.secret?.takeIf { draft.uid == uid } ?: NfcTagIo.readCode(tag) ?: NfcTagIo.newCode()
+                val result = withContext(Dispatchers.IO) { NfcTagIo.write(tag, packageName, code) }
+                Toast.makeText(this@MainActivity, writeResultText(result), Toast.LENGTH_LONG).show()
+                if (result == TagWriteResult.WRITTEN) onRegistered(uid, code)
+            }
+        }
+    }
+
+    private fun writeResultText(result: TagWriteResult): Int = when (result) {
+        TagWriteResult.WRITTEN -> R.string.nfc_write_done
+        TagWriteResult.READ_ONLY -> R.string.nfc_write_read_only
+        TagWriteResult.TOO_SMALL -> R.string.nfc_write_too_small
+        TagWriteResult.NOT_WRITABLE -> R.string.nfc_write_not_writable
+        TagWriteResult.FAILED -> R.string.nfc_write_failed
+    }
+
+    private fun openNfcSettings() {
+        startActivity(Intent(Settings.ACTION_NFC_SETTINGS))
     }
 
     private fun refreshSetupStatus() {
@@ -1052,6 +1217,9 @@ class MainActivity : ComponentActivity() {
             bluetoothConnectGranted = PairedDevices.hasPermission(this),
             nearbyScanGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || isGranted(Manifest.permission.BLUETOOTH_SCAN),
             bluetoothAdvertiseGranted = BeaconMode.hasPermission(this),
+            nfcTagsExist = setupStatus.value.nfcTagsExist,
+            hasNfc = NfcTagIo.hasNfc(this),
+            nfcOn = NfcTagIo.isOn(this),
         )
     }
 
@@ -1181,6 +1349,7 @@ class MainActivity : ComponentActivity() {
         alarmTriggers: List<AlarmTrigger>,
         places: List<LocationTrigger>,
         calendarTriggers: List<CalendarTrigger>,
+        nfcTags: List<NfcTag>,
         quickUsesDnd: Boolean,
         beaconMode: Boolean,
     ): List<PermissionRow> {
@@ -1192,6 +1361,7 @@ class MainActivity : ComponentActivity() {
                 AppPermission.NEARBY_ADVERTISE -> if (beaconMode) listOf(getString(R.string.beacon_mode_title)) else emptyList()
                 AppPermission.CALENDAR -> calendarTriggers.map { it.name }
                 AppPermission.NOTIFICATION_ACCESS -> alarmTriggers.map { it.name }
+                AppPermission.NFC_ON -> nfcTags.map { it.name }
                 AppPermission.DND_ACCESS ->
                     listOfNotNull(getString(R.string.quick_lock).takeIf { quickUsesDnd }) +
                         profiles.filter { PermissionNeeds.forProfile(it).isNotEmpty() }.map { it.name }
@@ -1240,6 +1410,7 @@ class MainActivity : ComponentActivity() {
             AppPermission.CALENDAR -> setupActions.onGrantCalendar()
             AppPermission.NOTIFICATION_ACCESS -> setupActions.onGrantNotificationAccess()
             AppPermission.DND_ACCESS -> setupActions.onGrantDnd()
+            AppPermission.NFC_ON -> openNfcSettings()
         }
     }
 
@@ -1260,6 +1431,7 @@ class MainActivity : ComponentActivity() {
             AppPermission.NOTIFICATION_ACCESS -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
                 .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, AlarmWatchListener.component(this).flattenToString())
             AppPermission.DND_ACCESS -> Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+            AppPermission.NFC_ON -> Intent(Settings.ACTION_NFC_SETTINGS)
             // Battery and every runtime permission live on the app's info page.
             else -> appDetails
         }
@@ -1337,6 +1509,7 @@ class MainActivity : ComponentActivity() {
         store.setQuickDndLevel(settings.dndLevel)
         store.setQuickGrayscale(settings.grayscale)
         store.setQuickResume(settings.resumeMode, settings.choiceSeconds)
+        store.setQuickNfcUnlock(settings.nfcUnlock)
         if (turnedOnModes) askForDndAccessIfNeeded()
     }
 

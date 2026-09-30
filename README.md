@@ -4,7 +4,7 @@ An Android app that locks your phone for a set time, and keeps it locked. It rec
 
 On top of that it adds automatic triggers (schedules, alarms, places, other apps), allowed-app passes, a timed early-unlock escape hatch, Do Not Disturb and grayscale during locks, and device-aware handling of each manufacturer's system screens.
 
-> **Status: 0.9.0 pre-release.** The core lock, passes, schedules, early unlock and intent API have been tested on a Pixel 7 and the Android emulator. Several newer features (listed under [Test status](#test-status)) are built but not yet tested on a device. NFC tags and emergency mode aren't built yet.
+> **Status: 0.9.0 pre-release.** The core lock, passes, schedules, early unlock and intent API have been tested on a Pixel 7 and the Android emulator. Several newer features (listed under [Test status](#test-status)) are built but not yet tested on a device. Emergency mode isn't built yet.
 
 ---
 
@@ -69,10 +69,18 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
   - The lock lasts until the event ends, or for a set length from its start, with an optional early start.
   - Declined and "free" events can be skipped; the defaults are in Settings.
   - Recurring events work. Moved or deleted events are picked up automatically, and a live "Next match" preview shows what would lock.
+- **NFC tags:** tap a tag to start a lock, end one, or both (start when none is running, end during one).
+  - **During a lock** a tag can: start the lock's early-unlock wait (the default), end it if the lock allows that tag, or end any lock.
+  - **Which tags can end a lock:** chosen per profile and for Quick lock under *Tags that can end this lock*. The default is none; *Any of my written tags* is an option you pick on purpose.
+  - **Only written tags can end a lock.** *Write to tag* puts a random code on the tag, and ending checks both the tag's ID and that code. A tag that was only scanned (or a read-only card) can still start locks and the early-unlock wait.
+  - **After an unlock** during a lock that a tag can end, the countdown screen waits a few seconds (default 10) for the tag before locking again. Ending only works there, never from a tag tapped elsewhere.
+  - **Scan tag vs Write to tag:** *Scan* only reads the tag's ID, so the tag works while the app is reading (the countdown screen, the editor). *Write* also stores the app's record and code on the tag, so it can end locks and works while the app is closed.
+  - **Limit:** the code on a tag can be read by any NFC app. Copying a tag still needs your physical tag and a special tag whose ID can be changed.
+  - Put the tag somewhere you have to walk to, so ending a lock is a conscious choice.
 - **Intent API:** start or stop locks from MacroDroid, Tasker and similar apps (see [below](#intent-api-macrodroid-tasker)).
 
 ### Backup
-- **Back up now / Restore:** everything (settings, Lock defaults, Quick lock, profiles, schedules, alarm, location and calendar triggers) as one JSON file, in a folder you pick (e.g. one synced to Google Drive).
+- **Back up now / Restore:** everything (settings, Lock defaults, Quick lock, profiles, schedules, alarm, location and calendar triggers, NFC tags) as one JSON file, in a folder you pick (e.g. one synced to Google Drive).
 - **Restore replaces everything,** after a confirmation that lists what may need attention on a new phone. The intent-API stop token is never included.
 - **Auto backup:** 10 minutes after your last change, then idle until the next change. Keeps the last 10, in the backup folder or a folder of its own.
 - **Not included:** the stop token, and *Act as a beacon* (each device keeps its own beacon ID).
@@ -84,7 +92,7 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
 
 ### Quality of life
 - **Tabs:** Quick lock · Profiles · Automations · Settings, in a bottom bar.
-- **Icons and order:** for profiles, schedules, alarm triggers and places; long-press a row to drag it.
+- **Icons and order:** for profiles, schedules, alarm triggers, places, calendar triggers and NFC tags; long-press a row to drag it.
 - **Themes:** System, Light, Dark and OLED black.
 - **App lists:** fast and searchable, with selected apps listed first.
 - **Setup and device profiles:** a setup checklist that only shows what's still missing, and device profiles for Pixel, Samsung, Nothing and generic Android, with a Diagnostics log for adding new ones.
@@ -118,12 +126,14 @@ The checklist on the **Settings** tab only shows what's still missing:
 | **Precise location + "Allow all the time"** | Only if you use location triggers (Android also requires it for Bluetooth beacons). |
 | **Nearby devices** | Only if a place uses a Bluetooth beacon or a paired device, or this device acts as a beacon. |
 | **Calendar** (read-only) | Only if you use calendar triggers. |
+| **NFC turned on** (a switch, not a permission) | Only if you use NFC tags. |
 
 ---
 
 ## Common use cases
 
 - **"No phone for the first hour after I wake up" (weekdays):** an alarm trigger on your QRAlarm alarm → a 1-hour profile, with Chosen weekdays Mon–Fri.
+- **"Only a walk to the kitchen ends it":** a written NFC tag on the fridge set to *End a lock → End it, if the lock allows NFC*, chosen under *Tags that can end this lock* on the profiles you want it for. Or keep the default, *Start the early-unlock wait*, so the walk only starts the countdown.
 - **Weekends, when you don't know which alarm will wake you:** an alarm trigger set to *The first alarm of the day* from Clock + QRAlarm, active Sat–Sun.
 - **Bedtime:** a schedule, 22:30 → 07:00 every day, starting a "Night" profile with Alarms-only DND and grayscale.
 - **Focus at the office:** a location with *During time slots* Mon–Fri 9:00–12:00 and 13:00–17:00, matched by *GPS or Wi-Fi* (the office router makes it exact indoors).
@@ -331,4 +341,6 @@ Requirements: Android Studio (2026.1 or newer; uses its bundled JDK), Android SD
 | Resume after screen-off, Lock defaults, DND levels, grayscale, presets, editor redesign, icons, reordering, first-alarm + day rules, timer exclusion, missing-alarm warnings, location triggers + time slots, calendar triggers, backup/restore + auto backup, release build | 🟡 Built, not yet tested on a device |
 | Beacon + charger places, "Only while at", act as a beacon | 🟡 Built, not yet tested on a device |
 | Paired Bluetooth devices (connected / nearby), Permissions page with revoke | 🟡 Built, not yet tested on a device |
-| NFC tags + gate screen, emergency mode | ⬜ Not built yet |
+| NFC tags (start / end / both, early-unlock wait, write to tag) + the gate after unlocking | 🟡 Built, not yet tested on a device |
+| Emergency mode | ⬜ Not built yet |
+| Google and Google-free editions, Pixel Watch complication | ⬜ Planned: [doc/plans/m15-editions-and-watch.md](doc/plans/m15-editions-and-watch.md) |

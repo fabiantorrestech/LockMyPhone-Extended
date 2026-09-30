@@ -159,6 +159,7 @@ interface BackupDao {
     @Query("DELETE FROM location_slots") suspend fun clearLocationSlots()
     @Query("DELETE FROM location_triggers") suspend fun clearLocations()
     @Query("DELETE FROM calendar_triggers") suspend fun clearCalendarTriggers()
+    @Query("DELETE FROM nfc_tags") suspend fun clearNfcTags()
     @Query("DELETE FROM alarm_triggers") suspend fun clearAlarmTriggers()
     @Query("DELETE FROM schedules") suspend fun clearSchedules()
     @Query("DELETE FROM profiles") suspend fun clearProfiles()
@@ -169,6 +170,7 @@ interface BackupDao {
     @Insert suspend fun insertLocations(items: List<LocationTrigger>)
     @Insert suspend fun insertLocationSlots(items: List<LocationSlot>)
     @Insert suspend fun insertCalendarTriggers(items: List<CalendarTrigger>)
+    @Insert suspend fun insertNfcTags(items: List<NfcTag>)
 
     /** Children are cleared first and parents inserted first, so the foreign keys always hold. IDs are kept. */
     @Transaction
@@ -179,7 +181,9 @@ interface BackupDao {
         locations: List<LocationTrigger>,
         slots: List<LocationSlot>,
         calendarTriggers: List<CalendarTrigger>,
+        nfcTags: List<NfcTag>,
     ) {
+        clearNfcTags()
         clearLocationSlots()
         clearLocations()
         clearCalendarTriggers()
@@ -192,6 +196,44 @@ interface BackupDao {
         insertLocations(locations)
         insertLocationSlots(slots)
         insertCalendarTriggers(calendarTriggers)
+        insertNfcTags(nfcTags)
+    }
+}
+
+@Dao
+interface NfcTagDao {
+    @Query("SELECT * FROM nfc_tags ORDER BY sortOrder, id")
+    fun observeAll(): Flow<List<NfcTag>>
+
+    @Query("SELECT * FROM nfc_tags ORDER BY sortOrder, id")
+    suspend fun getAll(): List<NfcTag>
+
+    @Query("SELECT * FROM nfc_tags WHERE uid = :uid")
+    suspend fun findByUid(uid: String): NfcTag?
+
+    @Insert
+    suspend fun insert(tag: NfcTag): Long
+
+    @Update
+    suspend fun update(tag: NfcTag)
+
+    @Delete
+    suspend fun delete(tag: NfcTag)
+
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM nfc_tags")
+    suspend fun nextSortOrder(): Int
+
+    /** Inserts at the end of the list. */
+    @Transaction
+    suspend fun insertLast(tag: NfcTag): Long = insert(tag.copy(sortOrder = nextSortOrder()))
+
+    @Query("UPDATE nfc_tags SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun setSortOrder(id: Long, sortOrder: Int)
+
+    /** Saves a new list order: [ids] from top to bottom. */
+    @Transaction
+    suspend fun reorder(ids: List<Long>) {
+        ids.forEachIndexed { index, id -> setSortOrder(id, index) }
     }
 }
 
@@ -306,8 +348,8 @@ class Converters {
 
 /** See ADR 0003: kept in device-protected storage so receivers can read it before the first unlock. */
 @Database(
-    entities = [LockProfile::class, LockSchedule::class, AlarmTrigger::class, LocationTrigger::class, LocationSlot::class, CalendarTrigger::class],
-    version = 14,
+    entities = [LockProfile::class, LockSchedule::class, AlarmTrigger::class, LocationTrigger::class, LocationSlot::class, CalendarTrigger::class, NfcTag::class],
+    version = 16,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -318,6 +360,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun locationTriggerDao(): LocationTriggerDao
     abstract fun locationSlotDao(): LocationSlotDao
     abstract fun calendarTriggerDao(): CalendarTriggerDao
+    abstract fun nfcTagDao(): NfcTagDao
     abstract fun backupDao(): BackupDao
 
     companion object {
@@ -328,7 +371,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.createDeviceProtectedStorageContext(),
                 AppDatabase::class.java,
                 NAME,
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16).build()
 
         /** v2: profiles gain a Do Not Disturb switch (off for existing profiles). */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -476,6 +519,37 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE location_triggers ADD COLUMN btRssiThreshold INTEGER NOT NULL DEFAULT -75")
             }
         }
+
+        /** v15: NFC tags that start or end locks. */
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(CREATE_NFC_TAGS)
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_nfc_tags_profileId` ON `nfc_tags` (`profileId`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_nfc_tags_uid` ON `nfc_tags` (`uid`)")
+            }
+        }
+
+        /** v16: only written tags (with their secret code) and chosen tags can end a lock. */
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE nfc_tags ADD COLUMN secret TEXT")
+                db.execSQL("ALTER TABLE profiles ADD COLUMN nfcUnlockTagIds TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /** Copied from Room's generated schema (v15), so the migrated table matches a fresh install. */
+        private const val CREATE_NFC_TAGS =
+            "CREATE TABLE IF NOT EXISTS `nfc_tags` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`name` TEXT NOT NULL, " +
+                "`icon` TEXT, " +
+                "`uid` TEXT NOT NULL, " +
+                "`action` TEXT NOT NULL, " +
+                "`duringLock` TEXT NOT NULL, " +
+                "`profileId` INTEGER, " +
+                "`durationSec` INTEGER, " +
+                "`enabled` INTEGER NOT NULL, " +
+                "`sortOrder` INTEGER NOT NULL, " +
+                "FOREIGN KEY(`profileId`) REFERENCES `profiles`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )"
 
         /** Copied from Room's generated schema, so the migrated table matches a fresh install. */
         private const val CREATE_CALENDAR_TRIGGERS =

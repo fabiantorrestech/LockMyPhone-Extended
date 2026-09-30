@@ -27,6 +27,9 @@ enum class AppPermission {
     CALENDAR,
     NOTIFICATION_ACCESS,
     DND_ACCESS,
+
+    /** NFC switched on in Android's settings (a switch, not a permission), for NFC tags. */
+    NFC_ON,
 }
 
 /** Whether something can work with the permissions granted right now. */
@@ -78,6 +81,8 @@ object PermissionNeeds {
     val forCalendarTrigger: Set<AppPermission> = setOf(AppPermission.CALENDAR)
 
     val forAlarmTrigger: Set<AppPermission> = setOf(AppPermission.NOTIFICATION_ACCESS)
+
+    val forNfcTag: Set<AppPermission> = setOf(AppPermission.NFC_ON)
 
     fun forProfile(profile: LockProfile): Set<AppPermission> =
         if (profile.dndEnabled || profile.grayscale) setOf(AppPermission.DND_ACCESS) else emptySet()

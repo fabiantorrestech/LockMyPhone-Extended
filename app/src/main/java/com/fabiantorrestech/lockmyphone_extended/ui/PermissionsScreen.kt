@@ -210,6 +210,7 @@ fun SetupStatus.grantedPermissions(): Set<AppPermission> = buildSet {
     if (calendarGranted) add(AppPermission.CALENDAR)
     if (notificationAccessGranted) add(AppPermission.NOTIFICATION_ACCESS)
     if (dndAccessGranted) add(AppPermission.DND_ACCESS)
+    if (nfcOn) add(AppPermission.NFC_ON)
 }
 
 /** "⏸ Paused: needs Precise location" under a list row, or null when everything it needs is allowed. */
@@ -234,6 +235,7 @@ fun permissionLabel(permission: AppPermission): Int = when (permission) {
     AppPermission.CALENDAR -> R.string.perm_calendar
     AppPermission.NOTIFICATION_ACCESS -> R.string.perm_notification_access
     AppPermission.DND_ACCESS -> R.string.perm_dnd
+    AppPermission.NFC_ON -> R.string.perm_nfc
 }
 
 private fun permissionReason(permission: AppPermission): Int = when (permission) {
@@ -251,4 +253,5 @@ private fun permissionReason(permission: AppPermission): Int = when (permission)
     AppPermission.CALENDAR -> R.string.perm_calendar_why
     AppPermission.NOTIFICATION_ACCESS -> R.string.perm_notification_access_why
     AppPermission.DND_ACCESS -> R.string.perm_dnd_why
+    AppPermission.NFC_ON -> R.string.perm_nfc_why
 }

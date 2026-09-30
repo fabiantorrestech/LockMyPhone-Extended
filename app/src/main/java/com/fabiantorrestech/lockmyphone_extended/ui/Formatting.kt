@@ -15,6 +15,9 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockSchedule
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcDuringLock
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTagAction
 import java.time.DayOfWeek
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -85,6 +88,26 @@ fun formatCalendarTrigger(context: Context, trigger: CalendarTrigger, profileNam
     }
     val summary = "$what → $lock · $length"
     return if (trigger.enabled) summary else context.getString(R.string.schedule_off, summary)
+}
+
+/** "Starts Morning · 1h", "During a lock: starts the early-unlock wait", "Starts Quick lock · during a lock: ends it". */
+fun formatNfcTag(context: Context, tag: NfcTag, profileName: String?): String {
+    val lock = profileName ?: context.getString(R.string.quick_lock)
+    val start = tag.durationSec?.let { "$lock · ${formatPresetLabel(it)}" } ?: lock
+    val duringLock = context.getString(
+        when (tag.duringLock) {
+            NfcDuringLock.START_BYPASS_WAIT -> R.string.nfc_during_bypass_short
+            NfcDuringLock.END_IF_ALLOWED -> R.string.nfc_during_end_allowed_short
+            NfcDuringLock.END_ANY -> R.string.nfc_during_end_any_short
+        }
+    )
+    val summary = when (tag.action) {
+        NfcTagAction.START -> context.getString(R.string.nfc_summary_start, start)
+        NfcTagAction.END -> context.getString(R.string.nfc_summary_end, duringLock)
+        NfcTagAction.TOGGLE -> context.getString(R.string.nfc_summary_toggle, start, duringLock)
+    }
+    val shown = if (tag.enabled) summary else context.getString(R.string.schedule_off, summary)
+    return if (tag.endsLocks && !tag.written) shown + "\n" + context.getString(R.string.nfc_card_not_written) else shown
 }
 
 /** "While here → Night · 100 m", "On arrival → Quick lock · Wi-Fi Home · Sat, Sun (off)". */

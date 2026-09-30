@@ -1,6 +1,7 @@
 package com.fabiantorrestech.lockmyphone_extended.data.backup
 
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
+import com.fabiantorrestech.lockmyphone_extended.core.lock.NfcUnlock
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 import com.fabiantorrestech.lockmyphone_extended.data.BypassDefaults
 import com.fabiantorrestech.lockmyphone_extended.data.LockDefaults
@@ -20,6 +21,9 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.LocationSlot
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockSchedule
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcDuringLock
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTagAction
 import com.fabiantorrestech.lockmyphone_extended.trigger.calendar.DeviceCalendar
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationEngineChoice
 import org.json.JSONArray
@@ -35,6 +39,7 @@ data class SettingsSnapshot(
     val quickGrayscale: Boolean,
     val quickResumeMode: UnlockResumeMode,
     val quickChoiceSeconds: Int,
+    val quickNfcUnlock: NfcUnlock,
     val lockDefaults: LockDefaults,
     val durationPresetsSec: List<Long>,
     val themeMode: ThemeMode,
@@ -45,6 +50,7 @@ data class SettingsSnapshot(
     val calendarSkipFree: Boolean,
     val oemProfileId: String?,
     val intentStopEnabled: Boolean,
+    val nfcGateSeconds: Int,
 )
 
 /** Everything a backup file holds. */
@@ -61,6 +67,7 @@ data class BackupContents(
     val calendarTriggers: List<CalendarTrigger>,
     /** The calendars the calendar triggers point at, so they can be found again by account + name. */
     val calendars: List<DeviceCalendar>,
+    val nfcTags: List<NfcTag>,
 )
 
 /**
@@ -85,6 +92,7 @@ object BackupJson {
         put("locationSlots", array(contents.locationSlots, ::slotToJson))
         put("calendarTriggers", array(contents.calendarTriggers, ::calendarToJson))
         put("calendars", array(contents.calendars) { JSONObject().put("id", it.id).put("name", it.name).put("account", it.account) })
+        put("nfcTags", array(contents.nfcTags, ::nfcTagToJson))
     }.toString(2)
 
     /** @throws IllegalArgumentException if [text] isn't a backup from this app. */
@@ -105,6 +113,7 @@ object BackupJson {
             locationSlots = list(root, "locationSlots", ::slotFromJson),
             calendarTriggers = list(root, "calendarTriggers", ::calendarFromJson),
             calendars = list(root, "calendars") { DeviceCalendar(it.getLong("id"), it.optString("name"), it.optString("account")) },
+            nfcTags = list(root, "nfcTags", ::nfcTagFromJson),
         )
     }
 
@@ -120,6 +129,8 @@ object BackupJson {
         put("quickGrayscale", s.quickGrayscale)
         put("quickResumeMode", s.quickResumeMode.name)
         put("quickChoiceSeconds", s.quickChoiceSeconds)
+        put("quickNfcUnlock", s.quickNfcUnlock.anyTag)
+        put("quickNfcUnlockTags", strings(s.quickNfcUnlock.tagIds))
         put("lockDefaults", JSONObject().apply {
             val d = s.lockDefaults
             put("durationSec", d.durationSec)
@@ -131,6 +142,8 @@ object BackupJson {
             put("grayscale", d.grayscale)
             put("resumeMode", d.resumeMode.name)
             put("choiceSeconds", d.unlockChoiceSeconds)
+            put("nfcUnlock", d.nfcUnlock.anyTag)
+            put("nfcUnlockTags", strings(d.nfcUnlock.tagIds))
         })
         put("durationPresetsSec", JSONArray(s.durationPresetsSec))
         put("themeMode", s.themeMode.name)
@@ -141,6 +154,7 @@ object BackupJson {
         put("calendarSkipFree", s.calendarSkipFree)
         put("oemProfileId", s.oemProfileId ?: JSONObject.NULL)
         put("intentStopEnabled", s.intentStopEnabled)
+        put("nfcGateSeconds", s.nfcGateSeconds)
     }
 
     private fun settingsFromJson(o: JSONObject): SettingsSnapshot {
@@ -154,6 +168,7 @@ object BackupJson {
             quickGrayscale = o.optBoolean("quickGrayscale"),
             quickResumeMode = enumOr(o.optString("quickResumeMode"), UnlockResumeMode.RESUME_APP),
             quickChoiceSeconds = o.optInt("quickChoiceSeconds", 3),
+            quickNfcUnlock = NfcUnlock(o.optBoolean("quickNfcUnlock"), stringSet(o, "quickNfcUnlockTags")),
             lockDefaults = LockDefaults(
                 durationSec = d.optLong("durationSec", 60L * 60),
                 allowedPackages = stringSet(d, "allowedPackages"),
@@ -163,6 +178,7 @@ object BackupJson {
                 grayscale = d.optBoolean("grayscale"),
                 resumeMode = enumOr(d.optString("resumeMode"), UnlockResumeMode.RESUME_APP),
                 unlockChoiceSeconds = d.optInt("choiceSeconds", 3),
+                nfcUnlock = NfcUnlock(d.optBoolean("nfcUnlock"), stringSet(d, "nfcUnlockTags")),
             ),
             durationPresetsSec = o.optJSONArray("durationPresetsSec")?.let { a -> (0 until a.length()).map { a.getLong(it) } } ?: emptyList(),
             themeMode = enumOr(o.optString("themeMode"), ThemeMode.SYSTEM),
@@ -173,6 +189,7 @@ object BackupJson {
             calendarSkipFree = o.optBoolean("calendarSkipFree", false),
             oemProfileId = o.optStringOrNull("oemProfileId"),
             intentStopEnabled = o.optBoolean("intentStopEnabled"),
+            nfcGateSeconds = o.optInt("nfcGateSeconds", 10),
         )
     }
 
@@ -185,6 +202,7 @@ object BackupJson {
         put("dndEnabled", p.dndEnabled); put("dndLevel", p.dndLevel.name); put("grayscale", p.grayscale)
         put("unlockResumeMode", p.unlockResumeMode.name); put("unlockChoiceSeconds", p.unlockChoiceSeconds)
         put("icon", p.icon ?: JSONObject.NULL); put("sortOrder", p.sortOrder)
+        put("nfcUnlockTagIds", strings(p.nfcUnlockTagIds))
     }
 
     private fun profileFromJson(o: JSONObject) = LockProfile(
@@ -195,7 +213,7 @@ object BackupJson {
         grayscale = o.optBoolean("grayscale"),
         unlockResumeMode = enumOr(o.optString("unlockResumeMode"), UnlockResumeMode.RESUME_APP),
         unlockChoiceSeconds = o.optInt("unlockChoiceSeconds", 3), icon = o.optStringOrNull("icon"),
-        sortOrder = o.optInt("sortOrder"),
+        sortOrder = o.optInt("sortOrder"), nfcUnlockTagIds = stringSet(o, "nfcUnlockTagIds"),
     )
 
     private fun scheduleToJson(s: LockSchedule) = JSONObject().apply {
@@ -302,6 +320,23 @@ object BackupJson {
         fixedDurationSec = o.optLong("fixedDurationSec", CalendarTrigger.DEFAULT_FIXED_DURATION_SEC),
         startEarlyMinutes = o.optInt("startEarlyMinutes"), profileId = o.optLongOrNull("profileId"),
         requiredPlaceId = o.optLongOrNull("requiredPlaceId"),
+    )
+
+    private fun nfcTagToJson(t: NfcTag) = JSONObject().apply {
+        put("id", t.id); put("name", t.name); put("icon", t.icon ?: JSONObject.NULL); put("uid", t.uid)
+        put("action", t.action.name); put("duringLock", t.duringLock.name); put("profileId", t.profileId ?: JSONObject.NULL)
+        put("durationSec", t.durationSec ?: JSONObject.NULL); put("enabled", t.enabled); put("sortOrder", t.sortOrder)
+        // Included so restored tags still end locks without being written again.
+        put("secret", t.secret ?: JSONObject.NULL)
+    }
+
+    private fun nfcTagFromJson(o: JSONObject) = NfcTag(
+        id = o.getLong("id"), name = o.getString("name"), icon = o.optStringOrNull("icon"), uid = o.getString("uid"),
+        action = enumOr(o.optString("action"), NfcTagAction.TOGGLE),
+        duringLock = enumOr(o.optString("duringLock"), NfcDuringLock.START_BYPASS_WAIT),
+        profileId = o.optLongOrNull("profileId"), durationSec = o.optLongOrNull("durationSec"),
+        enabled = o.optBoolean("enabled", true), sortOrder = o.optInt("sortOrder"),
+        secret = o.optStringOrNull("secret"),
     )
 
     // ---- helpers ----

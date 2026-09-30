@@ -29,6 +29,7 @@ enum class UnlockResumeMode {
  * @param resumeMode what a resumed pass does after an unlock.
  * @param unlockChoiceSeconds with [UnlockResumeMode.SHOW_LOCK_SCREEN], how long the countdown
  *   screen waits for the user to pick an app before locking again.
+ * @param nfcUnlock which NFC tags set to "End it, if the lock allows NFC" can end this lock.
  */
 data class LockSession(
     val label: String,
@@ -44,6 +45,7 @@ data class LockSession(
     val passPaused: Boolean = false,
     val resumeMode: UnlockResumeMode = UnlockResumeMode.RESUME_APP,
     val unlockChoiceSeconds: Int = DEFAULT_UNLOCK_CHOICE_SECONDS,
+    val nfcUnlock: NfcUnlock = NfcUnlock.NONE,
 ) {
     val bypassAllowed: Boolean get() = bypassDelayMs != null
     val bypassPending: Boolean get() = bypassEndsAtMs != null
@@ -53,6 +55,30 @@ data class LockSession(
 
     companion object {
         const val DEFAULT_UNLOCK_CHOICE_SECONDS = 3
+    }
+}
+
+/**
+ * Which NFC tags can end a lock through "End it, if the lock allows NFC". Only tags written by
+ * the app can end a lock at all; this narrows it down to the ones chosen for the lock.
+ *
+ * @param anyTag every written tag may end it.
+ * @param tagIds the chosen tags (their IDs as text), used when [anyTag] is off.
+ */
+data class NfcUnlock(val anyTag: Boolean = false, val tagIds: Set<String> = emptySet()) {
+
+    fun allows(tagId: Long): Boolean = anyTag || tagId.toString() in tagIds
+
+    /** Two locks merged: only the tags both of them allow. */
+    fun stricter(other: NfcUnlock): NfcUnlock = when {
+        anyTag && other.anyTag -> NfcUnlock(anyTag = true)
+        anyTag -> NfcUnlock(tagIds = other.tagIds)
+        other.anyTag -> NfcUnlock(tagIds = tagIds)
+        else -> NfcUnlock(tagIds = tagIds intersect other.tagIds)
+    }
+
+    companion object {
+        val NONE = NfcUnlock()
     }
 }
 

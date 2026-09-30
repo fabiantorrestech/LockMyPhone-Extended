@@ -12,6 +12,7 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.calendar.CalendarTrigge
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationTriggerManager
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.trigger.ProfileLockStarter
+import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.NfcTagHandler
 import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmLearning
 import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmTimeStore
 import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmHealthChecker
@@ -80,6 +81,8 @@ class AppContainer(context: Context) {
     )
 
     val profileLockStarter = ProfileLockStarter(lockController, appCatalog) { settingsStore }
+
+    val nfcTagHandler = NfcTagHandler(appContext, database, lockController, profileLockStarter) { settingsStore }
 
     /** Device-protected, so schedules can check "Only while at…" before the first unlock too. */
     val locationStateStore = LocationStateStore(appContext)
@@ -154,6 +157,8 @@ class AppContainer(context: Context) {
         lockController.onLockEndedEarly = {
             appScope.launch { scheduleScheduler.suppressActiveWindow() }
         }
+        lockController.nfcGateSeconds = nfcTagHandler::gateSeconds
+        nfcTagHandler.watchTags(appScope)
     }
 
     /**
