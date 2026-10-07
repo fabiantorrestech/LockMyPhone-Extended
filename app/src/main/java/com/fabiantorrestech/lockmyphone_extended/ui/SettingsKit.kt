@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -29,6 +30,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -59,6 +61,14 @@ import com.fabiantorrestech.lockmyphone_extended.R
  */
 
 /**
+ * What an automation's editor adds to [EditorScaffold].
+ *
+ * @param holdNote shown at the top, e.g. "Paused while you edit".
+ * @param onTestNow shows the "Test now" button next to Save.
+ */
+class AutomationEditorExtras(val holdNote: String?, val onTestNow: (() -> Unit)?)
+
+/**
  * A full-screen editor: top bar (← back, title, 🗑 when [onDelete] is set), scrolling
  * [content], and Save pinned at the bottom.
  */
@@ -71,6 +81,7 @@ fun EditorScaffold(
     onSave: () -> Unit,
     modifier: Modifier = Modifier,
     onDelete: (() -> Unit)? = null,
+    automation: AutomationEditorExtras? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     BackHandler(onBack = onBack)
@@ -98,17 +109,29 @@ fun EditorScaffold(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
-            content = content,
-        )
+        ) {
+            automation?.holdNote?.let { note ->
+                Card(Modifier.fillMaxWidth()) {
+                    Text(note, style = MaterialTheme.typography.bodyMedium, modifier = SectionContentPadding)
+                }
+            }
+            content()
+        }
         Surface(tonalElevation = 3.dp) {
-            Button(
-                onClick = onSave,
-                enabled = saveEnabled,
-                modifier = Modifier
+            Row(
+                Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(stringResource(R.string.save))
+                automation?.onTestNow?.let { onTestNow ->
+                    OutlinedButton(onClick = onTestNow, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.test_now))
+                    }
+                }
+                Button(onClick = onSave, enabled = saveEnabled, modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.save))
+                }
             }
         }
     }
@@ -209,6 +232,30 @@ fun SwitchSettingsRow(
         enabled = enabled,
         trailing = { Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled) },
     )
+}
+
+/** A warning line inside a section, e.g. a predicted clash with another automation. */
+@Composable
+fun WarningNote(text: String) {
+    Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = SectionContentPadding)
+}
+
+/** A red banner for a setting that weakens the lock, e.g. an instant early unlock. */
+@Composable
+fun DangerBanner(text: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Warning, contentDescription = null)
+            Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 12.dp))
+        }
+    }
 }
 
 /** A radio-button row, for choosing one option inside a section. */

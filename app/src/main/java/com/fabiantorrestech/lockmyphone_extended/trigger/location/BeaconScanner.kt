@@ -2,6 +2,7 @@ package com.fabiantorrestech.lockmyphone_extended.trigger.location
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
@@ -26,6 +27,9 @@ import java.util.UUID
 class BeaconScanner(private val context: Context) {
 
     private val adapter get() = context.getSystemService(BluetoothManager::class.java)?.adapter
+    /** The background scan's keys and plan, so an unchanged one isn't restarted. */
+    @Volatile private var running: Pair<Set<String>, ScanPlan>? = null
+
     private val backgroundIntent by lazy { locationPendingIntent(context, LocationReceiver.ACTION_BEACON, REQUEST_CODE) }
 
     fun hasPermission(): Boolean =
@@ -39,22 +43,34 @@ class BeaconScanner(private val context: Context) {
 
     /** Watches the beacons of [places] in the background; replaces any earlier background scan. */
     @SuppressLint("MissingPermission") // Checked by hasPermission().
-    fun startBackground(places: List<LocationTrigger>) {
+    fun startBackground(places: List<LocationTrigger>, plan: ScanPlan = ScanPlan.BASE) {
+        val keys = places.flatMap(::scanKeys).toSet()
+        // Restarting a scan has a cost, and Android throttles more than 5 starts in 30 s: only on a change.
+        if (running == keys to plan) return
         stopBackground()
-        val filters = places.flatMap(::scanKeys).distinct().mapNotNull(::filterFor)
+        val filters = keys.mapNotNull(::filterFor)
         if (filters.isEmpty() || !hasPermission() || !isBluetoothOn()) return
+        val speed = plan.speed
         val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+            .setScanMode(
+                when (speed) {
+                    BeaconScanSpeed.LOW_POWER -> ScanSettings.SCAN_MODE_LOW_POWER
+                    BeaconScanSpeed.BALANCED -> ScanSettings.SCAN_MODE_BALANCED
+                    BeaconScanSpeed.LOW_LATENCY -> ScanSettings.SCAN_MODE_LOW_LATENCY
+                }
+            )
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
             // Batch sightings for a few seconds: fewer wake-ups, the rule smooths anyway.
-            .setReportDelay(REPORT_DELAY_MS)
+            .setReportDelay(plan.batchMs)
             .build()
         val result = adapter?.bluetoothLeScanner?.startScan(filters, settings, backgroundIntent)
-        Log.i(TAG, "Background beacon scan for ${filters.size} beacon(s): result $result")
+        running = keys to plan
+        Log.i(TAG, "Background beacon scan ($speed, ${plan.batchMs} ms batches) for ${filters.size} beacon(s): result $result")
     }
 
     @SuppressLint("MissingPermission")
     fun stopBackground() {
+        running = null
         if (!hasPermission()) return
         runCatching { adapter?.bluetoothLeScanner?.stopScan(backgroundIntent) }
     }
@@ -75,6 +91,75 @@ class BeaconScanner(private val context: Context) {
         val readings = mutableListOf<Int>()
         scanFor(durationMs) { result -> sightingsOf(result).filter { it.key == key }.forEach { readings += it.rssi } }
         return readings
+    }
+
+    /** Every beacon and device key heard during [durationMs], with all its readings (Refresh, Test now). */
+    suspend fun readingsByKey(durationMs: Long): Map<String, List<Int>> {
+        val readings = mutableMapOf<String, MutableList<Int>>()
+        scanFor(durationMs) { result ->
+            sightingsOf(result).forEach { readings.getOrPut(it.key) { mutableListOf() } += it.rssi }
+        }
+        return readings
+    }
+
+    /**
+     * An open scan for [durationMs], grouped per sender: one entry per physical beacon with every
+     * format it sent (strongest of each), so a multi-slot beacon is listed once (ADR 0006).
+     * Listed if it sent a recognised format or a name; strongest first.
+     */
+    suspend fun discoverGrouped(durationMs: Long): List<BeaconGroup> {
+        val builders = mutableMapOf<String, GroupBuilder>()
+        scanFor(durationMs) { result ->
+            val address = PairedDevices.normalize(result.device.address)
+            val builder = builders.getOrPut(address) { GroupBuilder(address, addressIsRandom(result)) }
+            builder.name = builder.name ?: result.scanRecord?.deviceName?.takeIf { it.isNotBlank() }
+            builder.strongest = maxOf(builder.strongest, result.rssi)
+            parse(result)?.takeIf { it.type != BeaconType.DEVICE }?.let { frame ->
+                val previous = builder.frames[frame.key]
+                if (previous == null || frame.rssi > previous.rssi) builder.frames[frame.key] = frame
+            }
+        }
+        return builders.values
+            .filter { it.frames.isNotEmpty() || it.name != null }
+            .map { it.build() }
+            .sortedByDescending { it.strongestRssi }
+    }
+
+    /** Calls [onSightings] with every sighting (each format, and the sender itself) for [durationMs]: the live signal meter. */
+    suspend fun watch(durationMs: Long, onSightings: (List<BeaconSighting>) -> Unit) {
+        scanFor(durationMs) { result -> onSightings(sightingsOf(result)) }
+    }
+
+    /** True / false on Android 15+, which reports whether an address is random; null before. */
+    private fun addressIsRandom(result: ScanResult): Boolean? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            result.device.addressType == BluetoothDevice.ADDRESS_TYPE_RANDOM
+        } else {
+            null
+        }
+
+    private class GroupBuilder(val address: String, val isRandom: Boolean?) {
+        var name: String? = null
+        var strongest = Int.MIN_VALUE
+        val frames = linkedMapOf<String, BeaconSighting>()
+
+        fun build() = BeaconGroup(
+            address = address,
+            name = name,
+            frames = frames.values.sortedBy { it.type.ordinal },
+            strongestRssi = strongest,
+            oneMeterPower = frames.values.sortedBy { it.type.ordinal }.firstNotNullOfOrNull { it.oneMeterPower },
+            addressRotates = BeaconRules.addressRotates(address, isRandom),
+        )
+    }
+
+    /** The signal 1 m away that beacon [key] says it has, from a scan of up to [durationMs]; null if it doesn't say. */
+    suspend fun advertisedPower(key: String, durationMs: Long): Int? {
+        var power: Int? = null
+        scanFor(durationMs) { result ->
+            if (power == null) power = parse(result)?.takeIf { it.key == key }?.oneMeterPower
+        }
+        return power
     }
 
     /** The addresses heard during [durationMs], with their strongest signal (paired-device picker). */
@@ -98,6 +183,7 @@ class BeaconScanner(private val context: Context) {
             BeaconType.DEVICE,
             result.scanRecord?.deviceName ?: result.device.address,
             result.rssi,
+            address = PairedDevices.normalize(result.device.address),
         )
         return if (beacon == null || beacon.key == device.key) listOf(device) else listOf(beacon, device)
     }
@@ -124,18 +210,32 @@ class BeaconScanner(private val context: Context) {
     fun parse(result: ScanResult): BeaconSighting? {
         val record = result.scanRecord
         val name = record?.deviceName
+        val address = PairedDevices.normalize(result.device.address)
         record?.getManufacturerSpecificData(BeaconRules.APPLE_COMPANY_ID)?.let { data ->
-            BeaconRules.iBeaconKey(data)?.let { return BeaconSighting(it, BeaconType.IBEACON, name ?: "iBeacon", result.rssi) }
+            BeaconRules.iBeaconKey(data)?.let {
+                return BeaconSighting(it, BeaconType.IBEACON, name ?: "iBeacon", result.rssi, BeaconRules.iBeaconMeasuredPower(data), address)
+            }
+        }
+        // AltBeacon can sit under any company ID.
+        record?.manufacturerSpecificData?.let { all ->
+            for (i in 0 until all.size()) {
+                val data = all.valueAt(i) ?: continue
+                BeaconRules.altBeaconKey(all.keyAt(i), data)?.let {
+                    return BeaconSighting(it, BeaconType.ALTBEACON, name ?: "AltBeacon", result.rssi, BeaconRules.altBeaconOneMeterPower(data), address)
+                }
+            }
         }
         record?.getServiceData(ParcelUuid(BeaconRules.APP_SERVICE_UUID))?.let { data ->
-            BeaconRules.appKey(data)?.let { return BeaconSighting(it, BeaconType.APP, name ?: "LockMyPhone beacon", result.rssi) }
+            BeaconRules.appKey(data)?.let { return BeaconSighting(it, BeaconType.APP, name ?: "LockMyPhone beacon", result.rssi, address = address) }
         }
         record?.getServiceData(ParcelUuid(BeaconRules.EDDYSTONE_SERVICE_UUID))?.let { data ->
-            BeaconRules.eddystoneKey(data)?.let { return BeaconSighting(it, BeaconType.EDDYSTONE, name ?: "Eddystone", result.rssi) }
+            BeaconRules.eddystoneKey(data)?.let {
+                return BeaconSighting(it, BeaconType.EDDYSTONE, name ?: "Eddystone", result.rssi, BeaconRules.eddystoneOneMeterPower(data), address)
+            }
         }
         // Other devices only if they have a name (an unnamed device can't be recognised by you).
         if (name.isNullOrBlank()) return null
-        return BeaconSighting(BeaconRules.deviceKey(result.device.address), BeaconType.DEVICE, name, result.rssi)
+        return BeaconSighting(BeaconRules.deviceKey(result.device.address), BeaconType.DEVICE, name, result.rssi, address = address)
     }
 
     /** The background-scan filter that matches exactly the beacon [key]. */
@@ -166,6 +266,20 @@ class BeaconScanner(private val context: Context) {
                 val mask = ByteArray(18) { 0xFF.toByte() }.also { it[1] = 0 }
                 ScanFilter.Builder().setServiceData(ParcelUuid(BeaconRules.EDDYSTONE_SERVICE_UUID), data, mask).build()
             }
+            BeaconType.ALTBEACON -> {
+                if (parts.size != 5) return null
+                val companyId = parts[1].toIntOrNull() ?: return null
+                val uuid = UUID.fromString(parts[2])
+                val data = ByteArray(22)
+                data[0] = 0xBE.toByte(); data[1] = 0xAC.toByte()
+                putLong(data, 2, uuid.mostSignificantBits)
+                putLong(data, 10, uuid.leastSignificantBits)
+                val id2 = parts[3].toInt()
+                val id3 = parts[4].toInt()
+                data[18] = (id2 ushr 8).toByte(); data[19] = id2.toByte()
+                data[20] = (id3 ushr 8).toByte(); data[21] = id3.toByte()
+                ScanFilter.Builder().setManufacturerData(companyId, data, ByteArray(22) { 0xFF.toByte() }).build()
+            }
             BeaconType.APP -> {
                 if (parts.size != 2) return null
                 val data = ByteArray(4).also { hexInto(parts[1], it, 0) }
@@ -192,6 +306,5 @@ class BeaconScanner(private val context: Context) {
     private companion object {
         const val TAG = "BeaconScanner"
         const val REQUEST_CODE = 4006
-        const val REPORT_DELAY_MS = 5_000L
     }
 }

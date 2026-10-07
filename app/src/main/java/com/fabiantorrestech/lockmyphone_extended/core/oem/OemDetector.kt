@@ -1,9 +1,11 @@
 package com.fabiantorrestech.lockmyphone_extended.core.oem
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import android.telecom.TelecomManager
 import android.view.inputmethod.InputMethodManager
 
@@ -48,4 +50,29 @@ class OemDetector(private val context: Context) {
             ?.map { it.packageName }
             ?.toSet()
             ?: emptySet()
+
+    /**
+     * Packages with an accessibility service the user has turned on. Their overlays (e.g. a
+     * grayscale filter) report window changes over the app in front.
+     */
+    fun accessibilityServicePackages(): Set<String> {
+        val enabled = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        ) ?: return emptySet()
+        return enabled.split(':')
+            .mapNotNull { ComponentName.unflattenFromString(it)?.packageName }
+            .toSet()
+    }
+
+    /** Whether [className] is an activity of [packageName], as opposed to an overlay or popup window. */
+    fun isActivity(packageName: String, className: String?): Boolean {
+        if (className == null) return false
+        return try {
+            context.packageManager.getActivityInfo(ComponentName(packageName, className), 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
 }

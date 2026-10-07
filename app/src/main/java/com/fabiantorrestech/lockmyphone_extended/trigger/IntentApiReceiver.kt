@@ -11,6 +11,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.util.launchAsync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.security.MessageDigest
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
 
 /**
  * The public intent API used by MacroDroid, Tasker and similar apps.
@@ -51,12 +52,13 @@ class IntentApiReceiver : BroadcastReceiver() {
                 Log.w(TAG, "START_LOCK ignored: no profile named '$profileName'")
                 return@launchAsync
             }
-            container.profileLockStarter.start(
+            val result = container.profileLockStarter.start(
                 profile = profile,
                 durationMs = durationMs,
                 label = context.getString(R.string.intent_lock_label, profile.name),
+                kind = LockKind.INTENT,
             )
-            Log.i(TAG, "START_LOCK: started '${profile.name}'")
+            Log.i(TAG, "START_LOCK '${profile.name}': $result")
         }
     }
 
@@ -66,11 +68,12 @@ class IntentApiReceiver : BroadcastReceiver() {
             Log.w(TAG, "START_LOCK (quick) ignored: device not unlocked since boot; pass a profile instead")
             return
         }
-        LockApp.container(context).profileLockStarter.startQuick(
+        val result = LockApp.container(context).profileLockStarter.startQuick(
             durationMs = durationMs,
             label = context.getString(R.string.intent_lock_label, context.getString(R.string.quick_lock)),
+            kind = LockKind.INTENT,
         )
-        Log.i(TAG, "START_LOCK: started Quick lock")
+        Log.i(TAG, "START_LOCK (quick): $result")
     }
 
     private fun stopLock(context: Context, intent: Intent) {

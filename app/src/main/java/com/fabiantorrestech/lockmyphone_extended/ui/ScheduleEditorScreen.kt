@@ -37,10 +37,13 @@ fun ScheduleEditorScreen(
     profiles: List<LockProfile>,
     places: List<LocationTrigger>,
     onDraftChange: (LockSchedule) -> Unit,
+    clash: String?,
     onSave: () -> Unit,
     onDelete: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The hold note and "Test now"; null for a new automation's editor or none at all. */
+    automation: AutomationEditorExtras? = null,
 ) {
     val context = LocalContext.current
     var editing by remember { mutableStateOf<ScheduleDialog?>(null) }
@@ -54,6 +57,7 @@ fun ScheduleEditorScreen(
         onSave = onSave,
         onDelete = if (isNew) null else ({ editing = ScheduleDialog.DELETE }),
         modifier = modifier,
+        automation = automation,
     ) {
         Text(formatSchedule(context, draft, profile?.name), style = MaterialTheme.typography.bodyMedium)
 
@@ -89,6 +93,7 @@ fun ScheduleEditorScreen(
         }
 
         SettingsSection(stringResource(R.string.section_when)) {
+            clash?.let { WarningNote(it) }
             DayChips(draft.daysMask, onChange = { onDraftChange(draft.copy(daysMask = it)) }, modifier = SectionContentPadding)
             SectionDivider()
             SettingsRow(

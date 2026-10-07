@@ -23,6 +23,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- WifiManager.startScan() for the Wi-Fi network picker (M20). Normal permission, no prompt. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Calendar triggers: read events (never written). -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
@@ -38,7 +40,8 @@
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
-    <!-- Android 11+ package visibility: list launchable apps, find the dialer, launcher and keyboards. -->
+    <!-- Android 11+ package visibility: list launchable apps, find the dialer, launcher, keyboards
+         and accessibility services (to tell their overlays from their activities). -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -53,6 +56,9 @@
         </intent>
         <intent>
             <action android:name="android.view.InputMethod" />
+        </intent>
+        <intent>
+            <action android:name="android.accessibilityservice.AccessibilityService" />
         </intent>
     </queries>
 
@@ -79,7 +85,16 @@
             </intent-filter>
         </activity>
 
-        <!-- A tag written by this app was tapped: no screen, it acts and closes. -->
+        <!-- A tag written by this app was tapped: see-through; it acts and closes, or asks which lock to start. -->
+        <!-- Morning lock's optional late check: "Just waking up?" (M22.1). -->
+        <activity
+            android:name=".trigger.wake.WakeCheckActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:theme="@style/Theme.LockMyPhoneExtended" />
+
         <activity
             android:name=".trigger.nfc.NfcTagActivity"
             android:excludeFromRecents="true"
@@ -87,11 +102,11 @@
             android:launchMode="singleInstance"
             android:noHistory="true"
             android:taskAffinity=""
-            android:theme="@android:style/Theme.NoDisplay">
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.nfc.action.NDEF_DISCOVERED" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/vnd.fabiantorrestech.lockmyphone.tag" />
+                <data android:scheme="lockmyphone" android:host="tag" />
             </intent-filter>
         </activity>
 
@@ -213,6 +228,16 @@
         <receiver
             android:name=".trigger.schedule.ScheduleAlarmReceiver"
             android:directBootAware="true"
+            android:exported="false" />
+
+        <!-- A changed automation's one-minute wait is over. -->
+        <receiver
+            android:name=".trigger.HoldEndReceiver"
+            android:exported="false" />
+
+        <!-- "Refresh" on the lock notification: re-checks the place that started the lock. -->
+        <receiver
+            android:name=".trigger.location.PlaceRefreshReceiver"
             android:exported="false" />
 
         <!-- Public intent API for automation apps (MacroDroid, Tasker). See IntentApiReceiver. -->

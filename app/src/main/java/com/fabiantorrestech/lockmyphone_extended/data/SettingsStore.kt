@@ -5,12 +5,14 @@ import android.util.Base64
 import androidx.core.content.edit
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
-import com.fabiantorrestech.lockmyphone_extended.core.lock.NfcUnlock
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 import com.fabiantorrestech.lockmyphone_extended.data.backup.SettingsSnapshot
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmDayRules
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationEngineChoice
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconPreset
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconScanSpeed
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconTiming
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,7 +47,6 @@ data class LockDefaults(
     val grayscale: Boolean,
     val resumeMode: UnlockResumeMode,
     val unlockChoiceSeconds: Int,
-    val nfcUnlock: NfcUnlock = NfcUnlock.NONE,
 ) {
     /** A new, unsaved profile pre-filled with these values. The editor uses it for Defaults too. */
     fun toProfileDraft(name: String = ""): LockProfile = LockProfile(
@@ -59,8 +60,6 @@ data class LockDefaults(
         grayscale = grayscale,
         unlockResumeMode = resumeMode,
         unlockChoiceSeconds = unlockChoiceSeconds,
-        nfcUnlockEnabled = nfcUnlock.anyTag,
-        nfcUnlockTagIds = nfcUnlock.tagIds,
     )
 
     companion object {
@@ -73,7 +72,6 @@ data class LockDefaults(
             grayscale = profile.grayscale,
             resumeMode = profile.unlockResumeMode,
             unlockChoiceSeconds = profile.unlockChoiceSeconds,
-            nfcUnlock = profile.nfcUnlock,
         )
     }
 }
@@ -119,6 +117,28 @@ class SettingsStore(context: Context) {
         _themeMode.value = mode
     }
 
+    /** Clock size, app-name size and font of the allowed-apps picker and the lock countdown. */
+    private val _pickerStyle = MutableStateFlow(
+        PickerStyle(
+            clockSizeSp = prefs.getInt(KEY_PICKER_CLOCK_SP, PickerStyle.DEFAULT_CLOCK_SIZE_SP),
+            appNameSizeSp = prefs.getInt(KEY_PICKER_APP_NAME_SP, PickerStyle.DEFAULT_APP_NAME_SIZE_SP),
+            font = FontChoice.fromId(prefs.getString(KEY_PICKER_FONT, null)),
+            hideStatusBar = prefs.getBoolean(KEY_PICKER_HIDE_STATUS_BAR, true),
+        ).clamped()
+    )
+    val pickerStyle: StateFlow<PickerStyle> = _pickerStyle.asStateFlow()
+
+    fun setPickerStyle(style: PickerStyle) {
+        val clamped = style.clamped()
+        prefs.edit {
+            putInt(KEY_PICKER_CLOCK_SP, clamped.clockSizeSp)
+            putInt(KEY_PICKER_APP_NAME_SP, clamped.appNameSizeSp)
+            putString(KEY_PICKER_FONT, clamped.font.id)
+            putBoolean(KEY_PICKER_HIDE_STATUS_BAR, clamped.hideStatusBar)
+        }
+        _pickerStyle.value = clamped
+    }
+
     /** Quick lock's Do Not Disturb switch. */
     private val _quickDndEnabled = MutableStateFlow(prefs.getBoolean(KEY_QUICK_DND, _lockDefaults.value.dndEnabled))
     val quickDndEnabled: StateFlow<Boolean> = _quickDndEnabled.asStateFlow()
@@ -140,18 +160,6 @@ class SettingsStore(context: Context) {
         _quickGrayscale.value = enabled
     }
 
-    /** Quick lock's "Tags that can end this lock". */
-    private val _quickNfcUnlock = MutableStateFlow(readNfcUnlock(KEY_QUICK_NFC_UNLOCK, KEY_QUICK_NFC_TAGS) ?: _lockDefaults.value.nfcUnlock)
-    val quickNfcUnlock: StateFlow<NfcUnlock> = _quickNfcUnlock.asStateFlow()
-
-    fun setQuickNfcUnlock(value: NfcUnlock) {
-        prefs.edit {
-            putBoolean(KEY_QUICK_NFC_UNLOCK, value.anyTag)
-            putStringSet(KEY_QUICK_NFC_TAGS, value.tagIds)
-        }
-        _quickNfcUnlock.value = value
-    }
-
     /** How long the countdown screen waits for an NFC tag after an unlock during a lock. */
     private val _nfcGateSeconds = MutableStateFlow(prefs.getInt(KEY_NFC_GATE_SECONDS, DEFAULT_NFC_GATE_SECONDS))
     val nfcGateSeconds: StateFlow<Int> = _nfcGateSeconds.asStateFlow()
@@ -159,6 +167,51 @@ class SettingsStore(context: Context) {
     fun setNfcGateSeconds(seconds: Int) {
         prefs.edit { putInt(KEY_NFC_GATE_SECONDS, seconds) }
         _nfcGateSeconds.value = seconds
+    }
+
+    /** A saved or switched-on automation waits a minute before it can lock, so the change can be checked. */
+    private val _automationCooldown = MutableStateFlow(prefs.getBoolean(KEY_AUTOMATION_COOLDOWN, true))
+    val automationCooldown: StateFlow<Boolean> = _automationCooldown.asStateFlow()
+
+    fun setAutomationCooldown(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_AUTOMATION_COOLDOWN, enabled) }
+        _automationCooldown.value = enabled
+    }
+
+    /** How quickly beacon places react unless a place has its own (Settings → Beacons). */
+    private val _beaconPreset = MutableStateFlow(
+        BeaconPreset.entries.firstOrNull { it.name == prefs.getString(KEY_BEACON_PRESET, null) } ?: BeaconPreset.BALANCED
+    )
+    val beaconPreset: StateFlow<BeaconPreset> = _beaconPreset.asStateFlow()
+
+    /** The Advanced numbers, used when [beaconPreset] is CUSTOM. */
+    private val _beaconCustomTiming = MutableStateFlow(readBeaconCustomTiming())
+    val beaconCustomTiming: StateFlow<BeaconTiming> = _beaconCustomTiming.asStateFlow()
+
+    /** The default timing every beacon place uses unless it has its own. */
+    fun defaultBeaconTiming(): BeaconTiming = BeaconTiming.of(_beaconPreset.value, _beaconCustomTiming.value)
+
+    fun setBeaconTiming(preset: BeaconPreset, custom: BeaconTiming) {
+        val clamped = custom.clamped()
+        prefs.edit {
+            putString(KEY_BEACON_PRESET, preset.name)
+            putLong(KEY_BEACON_ARRIVE_MS, clamped.arriveMs)
+            putLong(KEY_BEACON_LEAVE_MS, clamped.leaveMs)
+            putLong(KEY_BEACON_RECHECK_MS, clamped.recheckMs)
+            putString(KEY_BEACON_SCAN_SPEED, clamped.scanSpeed.name)
+        }
+        _beaconPreset.value = preset
+        _beaconCustomTiming.value = clamped
+    }
+
+    private fun readBeaconCustomTiming(): BeaconTiming {
+        val balanced = BeaconTiming.BALANCED
+        return BeaconTiming(
+            arriveMs = prefs.getLong(KEY_BEACON_ARRIVE_MS, balanced.arriveMs),
+            leaveMs = prefs.getLong(KEY_BEACON_LEAVE_MS, balanced.leaveMs),
+            recheckMs = prefs.getLong(KEY_BEACON_RECHECK_MS, balanced.recheckMs),
+            scanSpeed = BeaconScanSpeed.entries.firstOrNull { it.name == prefs.getString(KEY_BEACON_SCAN_SPEED, null) } ?: balanced.scanSpeed,
+        )
     }
 
     /** One-tap lock lengths (seconds), 0 to [MAX_DURATION_PRESETS], shown above the H:M:S fields. */
@@ -250,11 +303,11 @@ class SettingsStore(context: Context) {
         quickGrayscale = quickGrayscale.value,
         quickResumeMode = quickResumeMode.value,
         quickChoiceSeconds = quickChoiceSeconds.value,
-        quickNfcUnlock = quickNfcUnlock.value,
         lockDefaults = lockDefaults.value,
         durationPresetsSec = durationPresetsSec.value,
         themeMode = themeMode.value,
         showAppIcons = showAppIcons.value,
+        pickerStyle = pickerStyle.value,
         alarmDayStartMinutes = alarmDayStartMinutes.value,
         locationEngine = locationEngine.value,
         calendarSkipDeclined = calendarSkipDeclined.value,
@@ -262,6 +315,9 @@ class SettingsStore(context: Context) {
         oemProfileId = oemProfileId.value,
         intentStopEnabled = intentStopEnabled.value,
         nfcGateSeconds = nfcGateSeconds.value,
+        automationCooldown = automationCooldown.value,
+        beaconPreset = beaconPreset.value,
+        beaconCustomTiming = beaconCustomTiming.value,
     )
 
     fun restore(s: SettingsSnapshot) {
@@ -272,17 +328,19 @@ class SettingsStore(context: Context) {
         setQuickDndLevel(s.quickDndLevel)
         setQuickGrayscale(s.quickGrayscale)
         setQuickResume(s.quickResumeMode, s.quickChoiceSeconds)
-        setQuickNfcUnlock(s.quickNfcUnlock)
         setLockDefaults(s.lockDefaults)
         setDurationPresets(s.durationPresetsSec)
         setThemeMode(s.themeMode)
         setShowAppIcons(s.showAppIcons)
+        setPickerStyle(s.pickerStyle)
         setAlarmDayStartMinutes(s.alarmDayStartMinutes)
         setLocationEngine(s.locationEngine)
         setCalendarDefaults(s.calendarSkipDeclined, s.calendarSkipFree)
         setOemProfileId(s.oemProfileId)
         setIntentStopEnabled(s.intentStopEnabled)
         setNfcGateSeconds(s.nfcGateSeconds)
+        setAutomationCooldown(s.automationCooldown)
+        setBeaconTiming(s.beaconPreset, s.beaconCustomTiming)
     }
 
     /** "Act as a beacon": this device broadcasts a beacon other phones can use as a place. */
@@ -356,8 +414,6 @@ class SettingsStore(context: Context) {
             putBoolean(KEY_DEFAULT_GRAYSCALE, defaults.grayscale)
             putString(KEY_DEFAULT_RESUME_MODE, defaults.resumeMode.name)
             putInt(KEY_DEFAULT_CHOICE_SECONDS, defaults.unlockChoiceSeconds)
-            putBoolean(KEY_DEFAULT_NFC_UNLOCK, defaults.nfcUnlock.anyTag)
-            putStringSet(KEY_DEFAULT_NFC_TAGS, defaults.nfcUnlock.tagIds)
         }
         _lockDefaults.value = defaults
     }
@@ -372,7 +428,6 @@ class SettingsStore(context: Context) {
         setQuickDndLevel(defaults.dndLevel)
         setQuickGrayscale(defaults.grayscale)
         setQuickResume(defaults.resumeMode, defaults.unlockChoiceSeconds)
-        setQuickNfcUnlock(defaults.nfcUnlock)
     }
 
     fun setQuickDurationSec(seconds: Long) {
@@ -466,22 +521,12 @@ class SettingsStore(context: Context) {
         grayscale = prefs.getBoolean(KEY_DEFAULT_GRAYSCALE, false),
         resumeMode = readResumeMode(KEY_DEFAULT_RESUME_MODE) ?: UnlockResumeMode.RESUME_APP,
         unlockChoiceSeconds = prefs.getInt(KEY_DEFAULT_CHOICE_SECONDS, LockSession.DEFAULT_UNLOCK_CHOICE_SECONDS),
-        nfcUnlock = readNfcUnlock(KEY_DEFAULT_NFC_UNLOCK, KEY_DEFAULT_NFC_TAGS) ?: NfcUnlock.NONE,
     )
 
     /** Unsaved presets: 15 min, 30 min, 1 h, 2 h, 4 h, 8 h. An empty saved list means "none". */
     private fun readDurationPresets(): List<Long> {
         val saved = prefs.getString(KEY_DURATION_PRESETS, null) ?: return DEFAULT_DURATION_PRESETS
         return saved.split(',').mapNotNull { it.trim().toLongOrNull() }
-    }
-
-    /** Null if nothing was saved yet. */
-    private fun readNfcUnlock(anyKey: String, tagsKey: String): NfcUnlock? {
-        if (!prefs.contains(anyKey) && !prefs.contains(tagsKey)) return null
-        return NfcUnlock(
-            anyTag = prefs.getBoolean(anyKey, false),
-            tagIds = prefs.getStringSet(tagsKey, null)?.toSet() ?: emptySet(),
-        )
     }
 
     private fun readDndLevel(key: String): DndLevel? =
@@ -505,11 +550,13 @@ class SettingsStore(context: Context) {
         const val KEY_QUICK_DND = "quick_dnd_enabled"
         const val KEY_QUICK_DND_LEVEL = "quick_dnd_level"
         const val KEY_QUICK_GRAYSCALE = "quick_grayscale"
-        const val KEY_QUICK_NFC_UNLOCK = "quick_nfc_unlock"
-        const val KEY_DEFAULT_NFC_UNLOCK = "default_nfc_unlock"
-        const val KEY_QUICK_NFC_TAGS = "quick_nfc_unlock_tags"
-        const val KEY_DEFAULT_NFC_TAGS = "default_nfc_unlock_tags"
         const val KEY_NFC_GATE_SECONDS = "nfc_gate_seconds"
+        const val KEY_AUTOMATION_COOLDOWN = "automation_cooldown"
+        const val KEY_BEACON_PRESET = "beacon_preset"
+        const val KEY_BEACON_ARRIVE_MS = "beacon_arrive_ms"
+        const val KEY_BEACON_LEAVE_MS = "beacon_leave_ms"
+        const val KEY_BEACON_RECHECK_MS = "beacon_recheck_ms"
+        const val KEY_BEACON_SCAN_SPEED = "beacon_scan_speed"
         const val DEFAULT_NFC_GATE_SECONDS = 10
         const val KEY_DEFAULT_GRAYSCALE = "default_grayscale"
         const val KEY_DURATION_PRESETS = "duration_presets_sec"
@@ -539,5 +586,9 @@ class SettingsStore(context: Context) {
         const val KEY_DEFAULT_CHOICE_SECONDS = "default_choice_seconds"
         const val KEY_SHOW_APP_ICONS = "show_app_icons"
         const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_PICKER_CLOCK_SP = "picker_clock_sp"
+        const val KEY_PICKER_APP_NAME_SP = "picker_app_name_sp"
+        const val KEY_PICKER_FONT = "picker_font"
+        const val KEY_PICKER_HIDE_STATUS_BAR = "picker_hide_status_bar"
     }
 }

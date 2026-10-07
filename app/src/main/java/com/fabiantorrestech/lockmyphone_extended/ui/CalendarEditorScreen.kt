@@ -62,6 +62,7 @@ fun CalendarEditorScreen(
     hasPermission: Boolean,
     calendars: List<DeviceCalendar>,
     nextMatch: CalendarWindow?,
+    clash: String?,
     presetsSec: List<Long>,
     onRequestPermission: () -> Unit,
     onDraftChange: (CalendarTrigger) -> Unit,
@@ -69,6 +70,8 @@ fun CalendarEditorScreen(
     onDelete: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The hold note and "Test now"; null for a new automation's editor or none at all. */
+    automation: AutomationEditorExtras? = null,
 ) {
     var editing by remember { mutableStateOf<CalendarDialog?>(null) }
     // The keyword text as typed, so commas and spaces aren't swallowed mid-edit.
@@ -83,6 +86,7 @@ fun CalendarEditorScreen(
         onSave = onSave,
         onDelete = if (isNew) null else ({ editing = CalendarDialog.DELETE }),
         modifier = modifier,
+        automation = automation,
     ) {
         if (!hasPermission) {
             Text(stringResource(R.string.calendar_needs_permission), style = MaterialTheme.typography.bodyMedium)
@@ -174,6 +178,7 @@ fun CalendarEditorScreen(
                 },
                 onClick = null,
             )
+            clash?.let { WarningNote(it) }
         }
 
         SettingsSection(stringResource(R.string.section_status)) {

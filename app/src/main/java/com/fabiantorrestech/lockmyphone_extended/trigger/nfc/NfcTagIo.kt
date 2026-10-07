@@ -20,10 +20,17 @@ enum class TagWriteResult { WRITTEN, READ_ONLY, TOO_SMALL, NOT_WRITABLE, FAILED 
 object NfcTagIo {
 
     /**
-     * The record "Write to tag" puts on a tag. Android opens [NfcTagActivity] when it sees it,
-     * so the tag works while the app is closed. Lower case, as Android requires for MIME filters.
+     * "Write to tag" puts only a link like lockmyphone://tag/<code> on a tag, so Android opens
+     * [NfcTagActivity] when it's tapped while the app is closed. On a Pixel 7, tags that also
+     * carried an Android Application Record were never routed to that activity (Android only
+     * opened the app), whatever the first record was; a link on its own is what other tag apps
+     * use successfully there.
      */
-    const val MIME_TYPE = "application/vnd.fabiantorrestech.lockmyphone.tag"
+    const val URI_SCHEME = "lockmyphone"
+    const val URI_HOST = "tag"
+
+    /** The MIME record written before links were used; still read, so those tags keep their code. */
+    private const val LEGACY_MIME_TYPE = "application/vnd.fabiantorrestech.lockmyphone.tag"
 
     private const val TAG = "NfcTagIo"
 
@@ -60,26 +67,29 @@ object NfcTagIo {
     fun codeIn(messages: Array<NdefMessage>?): String? = messages?.firstNotNullOfOrNull(::codeInMessage)
 
     private fun codeInMessage(message: NdefMessage?): String? {
-        val record = message?.records?.firstOrNull {
-            it.tnf == NdefRecord.TNF_MIME_MEDIA && String(it.type, Charsets.US_ASCII) == MIME_TYPE
+        val records = message?.records ?: return null
+        records.firstNotNullOfOrNull { record ->
+            record.toUri()?.takeIf { it.scheme == URI_SCHEME && it.host == URI_HOST }?.lastPathSegment
+        }?.let { return it }
+        val legacy = records.firstOrNull {
+            it.tnf == NdefRecord.TNF_MIME_MEDIA && String(it.type, Charsets.US_ASCII) == LEGACY_MIME_TYPE
         } ?: return null
-        val payload = record.payload
-        if (payload.size <= 1 || payload[0] != RECORD_VERSION) return null
+        val payload = legacy.payload
+        if (payload.size <= 1 || payload[0] != LEGACY_RECORD_VERSION) return null
         return String(payload, 1, payload.size - 1, Charsets.US_ASCII)
     }
 
-    /**
-     * Writes our record (with [code]) plus an Android Application Record. Blocking: call off the
-     * main thread.
-     */
-    fun write(tag: Tag, packageName: String, code: String): TagWriteResult {
-        val message = NdefMessage(
-            arrayOf(
-                NdefRecord.createMime(MIME_TYPE, byteArrayOf(RECORD_VERSION) + code.toByteArray(Charsets.US_ASCII)),
-                // Makes Android pick this app for the tag, never a chooser.
-                NdefRecord.createApplicationRecord(packageName),
-            )
-        )
+    /** What's on a tag, one record per line, for the log: helps tell why a tag isn't routed to the app. */
+    fun describe(tag: Tag): String {
+        val message = Ndef.get(tag)?.cachedNdefMessage ?: return "no NDEF message (techs ${tag.techList.joinToString()})"
+        return message.records.joinToString("; ") { record ->
+            "tnf=${record.tnf} type=${String(record.type, Charsets.US_ASCII)} uri=${record.toUri()} mime=${record.toMimeType()}"
+        }
+    }
+
+    /** Writes our link (with [code]), and nothing else. Blocking: call off the main thread. */
+    fun write(tag: Tag, code: String): TagWriteResult {
+        val message = NdefMessage(arrayOf(NdefRecord.createUri("$URI_SCHEME://$URI_HOST/$code")))
         return try {
             val ndef = Ndef.get(tag)
             if (ndef != null) {
@@ -111,7 +121,7 @@ object NfcTagIo {
         }
     }
 
-    /** Version 2: the payload is this byte followed by the tag's code. */
-    private const val RECORD_VERSION: Byte = 2
+    /** The legacy MIME record's payload: this byte, then the tag's code. */
+    private const val LEGACY_RECORD_VERSION: Byte = 2
     private const val CODE_BYTES = 16
 }

@@ -29,7 +29,7 @@ class BuiltInEngine(private val context: Context) : PresenceEngine {
     override fun start(triggers: List<LocationTrigger>) {
         locationManager.removeUpdates(pendingIntent)
         // Wi-Fi-only places are handled by the Wi-Fi callback.
-        if (triggers.none { it.usesGps }) return
+        if (triggers.none { it.usesGps || it.hasGpsZone() }) return
         locationManager.requestLocationUpdates(provider(), UPDATE_INTERVAL_MS, UPDATE_DISTANCE_METERS, pendingIntent)
         Log.i(TAG, "Requesting location updates from ${provider()}")
     }

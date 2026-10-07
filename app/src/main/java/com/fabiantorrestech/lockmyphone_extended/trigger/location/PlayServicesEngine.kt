@@ -32,7 +32,8 @@ class PlayServicesEngine(private val context: Context) : PresenceEngine {
     @SuppressLint("MissingPermission") // The manager checks the permission first.
     override fun start(triggers: List<LocationTrigger>) {
         // Wi-Fi-only places are handled by the Wi-Fi callback; they need no geofence.
-        val fences = triggers.filter { it.usesGps }.map { trigger ->
+        // GPS places, and beacon places that listen harder near their GPS area.
+        val fences = triggers.filter { it.usesGps || it.hasGpsZone() }.map { trigger ->
             Geofence.Builder()
                 .setRequestId(trigger.id.toString())
                 .setCircularRegion(trigger.latitude, trigger.longitude, max(trigger.radiusMeters, MIN_GEOFENCE_RADIUS_METERS).toFloat())

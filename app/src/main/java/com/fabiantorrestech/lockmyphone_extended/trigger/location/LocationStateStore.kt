@@ -38,16 +38,19 @@ class LocationStateStore(context: Context) {
 
     fun isNearAny(): Boolean = prefs.all.keys.any { it.startsWith(NEAR_PREFIX) }
 
-    /** A "while here" place started the lock that began at [lockStartedAtMs]. */
-    fun setLockOwner(triggerId: Long, lockStartedAtMs: Long) {
-        prefs.edit {
-            putLong(KEY_OWNER_TRIGGER, triggerId)
-            putLong(KEY_OWNER_STARTED_AT, lockStartedAtMs)
-        }
+    /** The geofence (the wider wake-up circle) says we're near [triggerId]'s place. */
+    fun isNear(triggerId: Long): Boolean = prefs.getBoolean(nearKey(triggerId), false)
+
+    /**
+     * The places whose lock ends when you leave ("while here", or time slots that unlock on
+     * leaving): only their locks get a Refresh button. Kept here so the lock notification can
+     * read it without the database.
+     */
+    fun setEndsOnLeave(placeIds: Set<Long>) {
+        prefs.edit { putStringSet(KEY_ENDS_ON_LEAVE, placeIds.map(Long::toString).toSet()) }
     }
 
-    fun ownsLock(triggerId: Long, lockStartedAtMs: Long): Boolean =
-        prefs.getLong(KEY_OWNER_TRIGGER, -1) == triggerId && prefs.getLong(KEY_OWNER_STARTED_AT, -1) == lockStartedAtMs
+    fun endsOnLeave(placeId: Long): Boolean = placeId.toString() in prefs.getStringSet(KEY_ENDS_ON_LEAVE, emptySet()).orEmpty()
 
     private fun presenceKey(id: Long) = "presence_$id"
     private fun nearKey(id: Long) = "$NEAR_PREFIX$id"
@@ -55,7 +58,6 @@ class LocationStateStore(context: Context) {
     private companion object {
         const val PREFS_NAME = "location_triggers"
         const val NEAR_PREFIX = "near_"
-        const val KEY_OWNER_TRIGGER = "owner_trigger"
-        const val KEY_OWNER_STARTED_AT = "owner_started_at"
+        const val KEY_ENDS_ON_LEAVE = "ends_on_leave"
     }
 }

@@ -15,10 +15,21 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockSchedule
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
+import com.fabiantorrestech.lockmyphone_extended.core.lock.QUICK_LOCK_ID
+import java.text.DateFormat
+import java.util.Date
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcDuringLock
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcLinkMode
+import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.NfcRules
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTagAction
+import com.fabiantorrestech.lockmyphone_extended.trigger.Clash
+import com.fabiantorrestech.lockmyphone_extended.trigger.calendar.CalendarClash
 import java.time.DayOfWeek
+import java.time.Instant
+import java.time.ZoneId
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -63,7 +74,11 @@ fun formatProfileSummary(context: Context, profile: LockProfile): String {
         context.resources.getQuantityString(R.plurals.apps_count, profile.allowedPackages.size, profile.allowedPackages.size),
     )
     parts += if (profile.bypassEnabled) {
-        context.getString(R.string.profile_summary_bypass, profile.bypassWaitMinutes)
+        if (profile.bypassWaitMinutes == 0) {
+            context.getString(R.string.profile_summary_bypass_instant)
+        } else {
+            context.getString(R.string.profile_summary_bypass, profile.bypassWaitMinutes)
+        }
     } else {
         context.getString(R.string.profile_summary_no_bypass)
     }
@@ -90,10 +105,56 @@ fun formatCalendarTrigger(context: Context, trigger: CalendarTrigger, profileNam
     return if (trigger.enabled) summary else context.getString(R.string.schedule_off, summary)
 }
 
-/** "Starts Morning · 1h", "During a lock: starts the early-unlock wait", "Starts Quick lock · during a lock: ends it". */
-fun formatNfcTag(context: Context, tag: NfcTag, profileName: String?): String {
-    val lock = profileName ?: context.getString(R.string.quick_lock)
-    val start = tag.durationSec?.let { "$lock · ${formatPresetLabel(it)}" } ?: lock
+/** "⚠ Clashes with Night (Mon 22:00–7:00): whichever starts first runs; the other is skipped." */
+fun formatClash(context: Context, clash: Clash): String = context.getString(
+    R.string.clash_warning,
+    clash.other.name,
+    clash.day.getDisplayName(TextStyle.SHORT, Locale.getDefault()),
+    formatMinuteOfDay(clash.startMinute),
+    formatMinuteOfDay(clash.endMinute),
+)
+
+/** "⚠ “Focus” (Tue 9:00) clashes with Night: whichever starts first runs; the other is skipped." */
+fun formatCalendarClash(context: Context, clash: CalendarClash): String {
+    val start = Instant.ofEpochMilli(clash.window.startMs).atZone(ZoneId.systemDefault())
+    val at = start.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault()) + " " +
+        formatMinuteOfDay(start.hour * 60 + start.minute)
+    return context.getString(R.string.calendar_clash_warning, clash.window.event.title, at, clash.otherName)
+}
+
+/** "Already in a schedule lock (Night) until 7:00 AM!" for a start that was refused. */
+fun formatAlreadyLocked(context: Context, running: LockSession): String {
+    val kind = context.getString(lockKindLabel(running.source.kind))
+    val name = running.source.name.ifEmpty { context.getString(R.string.quick_lock) }
+    val until = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(running.effectiveEndMs))
+    return context.getString(R.string.already_locked, kind, name, until)
+}
+
+/** The lock kinds, as words in a sentence ("a schedule lock"). */
+fun lockKindLabel(kind: LockKind): Int = when (kind) {
+    LockKind.MANUAL -> R.string.lock_kind_manual
+    LockKind.NFC -> R.string.lock_kind_nfc
+    LockKind.INTENT -> R.string.lock_kind_intent
+    LockKind.SCHEDULE -> R.string.lock_kind_schedule
+    LockKind.CALENDAR -> R.string.lock_kind_calendar
+    LockKind.PLACE -> R.string.lock_kind_place
+    LockKind.ALARM -> R.string.lock_kind_alarm
+    LockKind.WAKE -> R.string.lock_kind_wake
+}
+
+/**
+ * The tag's ID, then "Starts Study, Night · 1h", "During a lock: starts the early-unlock wait" or
+ * "Starts All locks · during a lock: ends it", and "Not written to the tag yet" when it isn't.
+ */
+fun formatNfcTag(context: Context, tag: NfcTag, profiles: List<LockProfile>): String {
+    val locks = if (tag.linkMode == NfcLinkMode.ALL) {
+        context.getString(R.string.nfc_all_locks)
+    } else {
+        val names = profiles.filter { tag.links(it.id.toString()) }.map { it.name } +
+            listOfNotNull(context.getString(R.string.quick_lock).takeIf { tag.links(QUICK_LOCK_ID) })
+        names.joinToString(", ").ifEmpty { "?" }
+    }
+    val start = tag.durationSec?.let { "$locks · ${formatPresetLabel(it)}" } ?: locks
     val duringLock = context.getString(
         when (tag.duringLock) {
             NfcDuringLock.START_BYPASS_WAIT -> R.string.nfc_during_bypass_short
@@ -102,12 +163,16 @@ fun formatNfcTag(context: Context, tag: NfcTag, profileName: String?): String {
         }
     )
     val summary = when (tag.action) {
-        NfcTagAction.START -> context.getString(R.string.nfc_summary_start, start)
+        NfcTagAction.START -> context.getString(R.string.nfc_summary_start, start) +
+            (if (tag.takeOver) " · " + context.getString(R.string.nfc_summary_takes_over) else "")
         NfcTagAction.END -> context.getString(R.string.nfc_summary_end, duringLock)
         NfcTagAction.TOGGLE -> context.getString(R.string.nfc_summary_toggle, start, duringLock)
     }
-    val shown = if (tag.enabled) summary else context.getString(R.string.schedule_off, summary)
-    return if (tag.endsLocks && !tag.written) shown + "\n" + context.getString(R.string.nfc_card_not_written) else shown
+    // The tag's ID tells which physical tag this is.
+    val id = tag.uid.takeIf { it.isNotEmpty() }?.let { context.getString(R.string.nfc_tag_id_short, NfcRules.formatUid(it)) }
+    val line = listOfNotNull(id, summary).joinToString("\n")
+    val shown = if (tag.enabled) line else context.getString(R.string.schedule_off, line)
+    return if (tag.written) shown else shown + "\n" + context.getString(R.string.nfc_card_not_written)
 }
 
 /** "While here → Night · 100 m", "On arrival → Quick lock · Wi-Fi Home · Sat, Sun (off)". */
@@ -116,7 +181,11 @@ fun formatLocationTrigger(context: Context, trigger: LocationTrigger, profileNam
     // e.g. "100 m + beacon Desk" (all needed) or "Wi-Fi Home / charger" (any one).
     val parts = buildList {
         if (trigger.usesGps) add(context.getString(R.string.meters_value, trigger.radiusMeters))
-        if (trigger.uses(PlaceSignal.WIFI)) add(context.getString(R.string.location_summary_wifi, trigger.wifiSsid ?: trigger.wifiBssid ?: "?"))
+        if (trigger.uses(PlaceSignal.WIFI)) {
+            val names = trigger.wifiNetworks.take(2).joinToString(", ") { it.label }.ifEmpty { "?" }
+            val more = (trigger.wifiNetworks.size - 2).takeIf { it > 0 }?.let { " (+$it)" }.orEmpty()
+            add(context.getString(R.string.location_summary_wifi, names + more))
+        }
         if (trigger.uses(PlaceSignal.BEACON)) add(context.getString(R.string.location_summary_beacon, trigger.beaconName ?: "?"))
         if (trigger.uses(PlaceSignal.BT_DEVICE)) {
             val summary = if (trigger.btDetection == BtDetection.NEARBY) R.string.location_summary_bt_near else R.string.location_summary_bt_connected

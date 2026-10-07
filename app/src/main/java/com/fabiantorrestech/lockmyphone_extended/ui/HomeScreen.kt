@@ -32,7 +32,11 @@ import androidx.compose.foundation.layout.FlowRow
 import com.fabiantorrestech.lockmyphone_extended.data.MAX_DURATION_PRESETS
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
+import com.fabiantorrestech.lockmyphone_extended.data.db.WakeTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcLinkMode
+import androidx.compose.ui.draw.alpha
+import com.fabiantorrestech.lockmyphone_extended.core.lock.QUICK_LOCK_ID
 import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.BatteryAlert
@@ -94,6 +98,13 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockSchedule
 import com.fabiantorrestech.lockmyphone_extended.trigger.IntentApiReceiver
+import com.fabiantorrestech.lockmyphone_extended.trigger.AutomationKey
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
+import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.Speed
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconPreset
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconTiming
+import kotlinx.coroutines.delay
 
 /** The home screen's tabs, in order. */
 enum class HomeTab { QUICK_LOCK, PROFILES, AUTOMATIONS, SETTINGS }
@@ -117,6 +128,10 @@ fun HomeScreen(
     profiles: List<LockProfile>,
     schedules: List<LockSchedule>,
     alarmTriggers: List<AlarmTrigger>,
+    cooldowns: Map<AutomationKey, Long>,
+    automationCooldown: Boolean,
+    onAutomationCooldownChange: (Boolean) -> Unit,
+    toggleActions: ToggleActions,
     appLabel: (packageName: String) -> String,
     onEditProfile: (LockProfile?) -> Unit,
     onEditSchedule: (LockSchedule?) -> Unit,
@@ -125,8 +140,11 @@ fun HomeScreen(
     onEditLocation: (LocationTrigger?) -> Unit,
     calendarTriggers: List<CalendarTrigger>,
     onEditCalendar: (CalendarTrigger?) -> Unit,
+    clashes: ClashWarnings,
     nfcTags: List<NfcTag>,
     onEditNfcTag: (NfcTag?) -> Unit,
+    wakeTriggers: List<WakeTrigger>,
+    onEditWake: (WakeTrigger?) -> Unit,
     nfcGateSeconds: Int,
     onNfcGateSecondsChange: (Int) -> Unit,
     calendarSkipDeclined: Boolean,
@@ -139,6 +157,9 @@ fun HomeScreen(
     locationEngine: LocationEngineChoice,
     playServicesAvailable: Boolean,
     onLocationEngineChange: (LocationEngineChoice) -> Unit,
+    beaconPreset: BeaconPreset,
+    beaconCustomTiming: BeaconTiming,
+    onBeaconTimingChange: (BeaconPreset, BeaconTiming) -> Unit,
     reorderActions: ReorderActions,
     alarmProblems: List<AlarmProblemUi>,
     alarmProblemActions: AlarmProblemActions,
@@ -157,6 +178,7 @@ fun HomeScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     showPickerIcons: Boolean,
     onShowPickerIconsChange: (Boolean) -> Unit,
+    pickerAppearance: PickerAppearance,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxSize()) {
@@ -189,7 +211,7 @@ fun HomeScreen(
                         }
                         ProfilesCard(
                             profiles, setup.accessibilityEnabled, setup.adminActive, onEditProfile,
-                            startActions.onStartProfile, reorderActions.onReorderProfiles, presetsSec, granted,
+                            startActions.onStartProfile, reorderActions.onReorderProfiles, granted,
                         )
                         // Room below the last profile, so the + button never covers its Start button.
                         Spacer(Modifier.height(FAB_CLEARANCE))
@@ -203,11 +225,38 @@ fun HomeScreen(
                             )
                         }
                         alarmProblems.forEach { problem -> AlarmProblemBanner(problem, alarmProblemActions) }
-                        SchedulesCard(schedules, profiles, onEditSchedule, reorderActions.onReorderSchedules)
-                        AlarmTriggersCard(alarmTriggers, profiles, appLabel, onEditAlarmTrigger, reorderActions.onReorderTriggers, granted)
-                        LocationsCard(locations, profiles, onEditLocation, reorderActions.onReorderLocations, granted)
-                        CalendarCard(calendarTriggers, profiles, onEditCalendar, reorderActions.onReorderCalendars, granted)
-                        NfcTagsCard(nfcTags, profiles, setup.hasNfc, onEditNfcTag, reorderActions.onReorderNfcTags, granted)
+                        // "Active in 0:45" on automations that changed less than a minute ago.
+                        val waitText = rememberCooldownText(cooldowns)
+                        // Morning lock's own sleep places are listed with it, not with the places.
+                        val sleepOwners = remember(wakeTriggers) { sleepPlaceOwners(wakeTriggers) }
+                        val (sleepPlaces, otherPlaces) = remember(locations, sleepOwners) {
+                            locations.partition { it.isMorningLockSleepPlace(sleepOwners) }
+                        }
+                        MorningLockCard(
+                            wakeTriggers, profiles, locations, onEditWake, granted,
+                            toggleActions.onToggleWake, { waitText(AutomationKey(LockKind.WAKE, it)) },
+                            sleepPlaces, onEditLocation,
+                        )
+                        SchedulesCard(
+                            schedules, profiles, onEditSchedule, reorderActions.onReorderSchedules, clashes.schedules,
+                            toggleActions.onToggleSchedule, { waitText(AutomationKey(LockKind.SCHEDULE, it)) },
+                        )
+                        AlarmTriggersCard(
+                            alarmTriggers, profiles, appLabel, onEditAlarmTrigger, reorderActions.onReorderTriggers, granted,
+                            toggleActions.onToggleAlarmTrigger, { waitText(AutomationKey(LockKind.ALARM, it)) },
+                        )
+                        LocationsCard(
+                            otherPlaces, profiles, onEditLocation, reorderActions.onReorderLocations, granted, clashes.places,
+                            toggleActions.onToggleLocation, { waitText(AutomationKey(LockKind.PLACE, it)) },
+                        )
+                        CalendarCard(
+                            calendarTriggers, profiles, onEditCalendar, reorderActions.onReorderCalendars, granted, clashes.calendars,
+                            toggleActions.onToggleCalendar, { waitText(AutomationKey(LockKind.CALENDAR, it)) },
+                        )
+                        NfcTagsCard(
+                            nfcTags, profiles, setup.hasNfc, onEditNfcTag, reorderActions.onReorderNfcTags, granted,
+                            toggleActions.onToggleNfcTag, { waitText(AutomationKey(LockKind.NFC, it)) },
+                        )
                     }
                     HomeTab.SETTINGS -> {
                         SetupChecklist(setup, setupActions)
@@ -215,14 +264,16 @@ fun HomeScreen(
                         LockDefaultsCard(onOpenLockDefaults)
                         BackupCard(backup, backupActions)
                         LengthPresetsCard(presetsSec, onPresetsChange)
+                        AutomationCooldownCard(automationCooldown, onAutomationCooldownChange)
                         AlarmDayStartCard(alarmDayStartMinutes, onAlarmDayStartChange)
                         LocationEngineCard(locationEngine, playServicesAvailable, onLocationEngineChange)
+                        BeaconTimingCard(beaconPreset, beaconCustomTiming, onBeaconTimingChange)
                         BeaconModeCard(beaconMode, onBeaconModeChange, setupActions.onAllowBackground)
                         CalendarDefaultsCard(calendarSkipDeclined, calendarSkipFree, onCalendarDefaultsChange)
                         if (setup.hasNfc) NfcGateCard(nfcGateSeconds, onNfcGateSecondsChange)
                         IntentApiCard(intentApi, intentApiActions)
                         DeviceCard(deviceProfileName, onChangeDevice)
-                        AppearanceCard(themeMode, onThemeModeChange, showPickerIcons, onShowPickerIconsChange)
+                        AppearanceCard(themeMode, onThemeModeChange, showPickerIcons, onShowPickerIconsChange, pickerAppearance)
                         OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.diag_open))
                         }
@@ -275,6 +326,9 @@ private fun LocationsCard(
     onEdit: (LocationTrigger?) -> Unit,
     onReorder: (List<LocationTrigger>) -> Unit,
     granted: Set<AppPermission>,
+    clashes: Map<Long, String>,
+    onToggle: (LocationTrigger, Boolean) -> Unit,
+    waitText: (Long) -> String?,
 ) {
     val context = LocalContext.current
     val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -288,12 +342,18 @@ private fun LocationsCard(
                 val profile = location.profileId?.let { profilesById[it] }
                 ListRow(
                     title = location.name,
-                    subtitle = withPauseNote(
-                        formatLocationTrigger(context, location, profile?.name),
-                        pauseNote(context, PermissionNeeds.checkPlace(location, granted)),
-                    ),
+                    subtitle = listOfNotNull(
+                        withPauseNote(
+                            formatLocationTrigger(context, location, profile?.name),
+                            pauseNote(context, PermissionNeeds.checkPlace(location, granted)),
+                        ),
+                        clashes[location.id],
+                        waitText(location.id),
+                    ).joinToString("\n"),
                     onClick = { onEdit(location) },
                     leading = { ProfileIcon(automationIcon(location.icon, profile), location.name) },
+                    trailing = { Switch(checked = location.enabled, onCheckedChange = { onToggle(location, it) }) },
+                    dimmed = !location.enabled,
                 )
             }
             OutlinedButton(onClick = { onEdit(null) }, modifier = Modifier.fillMaxWidth()) {
@@ -312,9 +372,10 @@ private fun NfcTagsCard(
     onEdit: (NfcTag?) -> Unit,
     onReorder: (List<NfcTag>) -> Unit,
     granted: Set<AppPermission>,
+    onToggle: (NfcTag, Boolean) -> Unit,
+    waitText: (Long) -> String?,
 ) {
     val context = LocalContext.current
-    val profilesById = remember(profiles) { profiles.associateBy { it.id } }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.nfc_tags_title), style = MaterialTheme.typography.titleMedium)
@@ -323,15 +384,22 @@ private fun NfcTagsCard(
                 tags.isEmpty() -> Text(stringResource(R.string.nfc_tags_empty), style = MaterialTheme.typography.bodySmall)
             }
             ReorderableColumn(tags, key = { it.id }, onReorder = onReorder) { tag, _ ->
-                val profile = tag.profileId?.let { profilesById[it] }
+                // With one linked profile, the row shows its icon unless the tag has its own.
+                val onlyProfile = profiles.firstOrNull { tag.linkMode == NfcLinkMode.ONE && tag.links(it.id.toString()) }
                 ListRow(
                     title = tag.name,
-                    subtitle = withPauseNote(
-                        formatNfcTag(context, tag, profile?.name),
-                        pauseNote(context, PermissionNeeds.check(PermissionNeeds.forNfcTag, granted)),
-                    ),
+                    subtitle = listOfNotNull(
+                        withPauseNote(
+                            formatNfcTag(context, tag, profiles),
+                            pauseNote(context, PermissionNeeds.check(PermissionNeeds.forNfcTag, granted)),
+                        ),
+                        waitText(tag.id),
+                    ).joinToString("\n"),
                     onClick = { onEdit(tag) },
-                    leading = { ProfileIcon(automationIcon(tag.icon, profile), tag.name) },
+                    leading = { ProfileIcon(automationIcon(tag.icon, onlyProfile), tag.name) },
+                    trailing = { Switch(checked = tag.enabled, onCheckedChange = { onToggle(tag, it) }) },
+                    // Dimmed while it's off, or until it's written to the tag.
+                    dimmed = !tag.enabled || !tag.written,
                 )
             }
             OutlinedButton(onClick = { onEdit(null) }, modifier = Modifier.fillMaxWidth(), enabled = hasNfc) {
@@ -536,6 +604,64 @@ private fun BeaconModeCard(state: BeaconModeUiState, onChange: (Boolean, Int?, I
     }
 }
 
+/** Morning lock (M22): usually one; set it up from here. */
+@Composable
+private fun MorningLockCard(
+    triggers: List<WakeTrigger>,
+    profiles: List<LockProfile>,
+    places: List<LocationTrigger>,
+    onEdit: (WakeTrigger?) -> Unit,
+    granted: Set<AppPermission>,
+    onToggle: (WakeTrigger, Boolean) -> Unit,
+    waitText: (Long) -> String?,
+    sleepPlaces: List<LocationTrigger>,
+    onEditPlace: (LocationTrigger) -> Unit,
+) {
+    val context = LocalContext.current
+    val profilesById = remember(profiles) { profiles.associateBy { it.id } }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.wake_title), style = MaterialTheme.typography.titleMedium)
+            if (triggers.isEmpty()) {
+                Text(stringResource(R.string.wake_empty), style = MaterialTheme.typography.bodySmall)
+            }
+            triggers.forEach { trigger ->
+                val profile = trigger.profileId?.let { profilesById[it] }
+                ListRow(
+                    title = trigger.name,
+                    subtitle = listOfNotNull(
+                        withPauseNote(
+                            formatWakeTrigger(context, trigger, profile?.name, places),
+                            pauseNote(context, PermissionNeeds.check(PermissionNeeds.forWakeTrigger, granted)),
+                        ),
+                        waitText(trigger.id),
+                    ).joinToString("\n"),
+                    onClick = { onEdit(trigger) },
+                    leading = { ProfileIcon(trigger.icon ?: WAKE_ICON, trigger.name) },
+                    trailing = { Switch(checked = trigger.enabled, onCheckedChange = { onToggle(trigger, it) }) },
+                    dimmed = !trigger.enabled,
+                )
+            }
+            if (sleepPlaces.isNotEmpty()) {
+                Text(stringResource(R.string.wake_places), style = MaterialTheme.typography.titleSmall)
+                sleepPlaces.forEach { place ->
+                    ListRow(
+                        title = place.name,
+                        subtitle = formatLocationTrigger(context, place, null) + "\n" + stringResource(R.string.wake_sleep_place_note),
+                        onClick = { onEditPlace(place) },
+                        leading = { ProfileIcon(place.icon ?: SLEEP_PLACE_ICON, place.name) },
+                    )
+                }
+            }
+            if (triggers.isEmpty()) {
+                OutlinedButton(onClick = { onEdit(null) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.wake_new))
+                }
+            }
+        }
+    }
+}
+
 /** Calendar triggers, with icons and drag to reorder. */
 @Composable
 private fun CalendarCard(
@@ -544,6 +670,9 @@ private fun CalendarCard(
     onEdit: (CalendarTrigger?) -> Unit,
     onReorder: (List<CalendarTrigger>) -> Unit,
     granted: Set<AppPermission>,
+    clashes: Map<Long, String>,
+    onToggle: (CalendarTrigger, Boolean) -> Unit,
+    waitText: (Long) -> String?,
 ) {
     val context = LocalContext.current
     val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -557,12 +686,18 @@ private fun CalendarCard(
                 val profile = trigger.profileId?.let { profilesById[it] }
                 ListRow(
                     title = trigger.name,
-                    subtitle = withPauseNote(
-                        formatCalendarTrigger(context, trigger, profile?.name),
-                        pauseNote(context, PermissionNeeds.check(PermissionNeeds.forCalendarTrigger, granted)),
-                    ),
+                    subtitle = listOfNotNull(
+                        withPauseNote(
+                            formatCalendarTrigger(context, trigger, profile?.name),
+                            pauseNote(context, PermissionNeeds.check(PermissionNeeds.forCalendarTrigger, granted)),
+                        ),
+                        clashes[trigger.id],
+                        waitText(trigger.id),
+                    ).joinToString("\n"),
                     onClick = { onEdit(trigger) },
                     leading = { ProfileIcon(automationIcon(trigger.icon, profile), trigger.name) },
+                    trailing = { Switch(checked = trigger.enabled, onCheckedChange = { onToggle(trigger, it) }) },
+                    dimmed = !trigger.enabled,
                 )
             }
             OutlinedButton(onClick = { onEdit(null) }, modifier = Modifier.fillMaxWidth()) {
@@ -655,6 +790,16 @@ private fun locationEngineDescription(choice: LocationEngineChoice): Int = when 
 }
 
 /** Saving a new list order after a drag. Each gets the items top to bottom. */
+/**
+ * Predicted clashes between automatic commitments, as ready-to-show warnings keyed by the
+ * schedule, place or calendar trigger ID. Only one lock runs at a time (ADR 0005).
+ */
+data class ClashWarnings(
+    val schedules: Map<Long, String> = emptyMap(),
+    val places: Map<Long, String> = emptyMap(),
+    val calendars: Map<Long, String> = emptyMap(),
+)
+
 class ReorderActions(
     val onReorderProfiles: (List<LockProfile>) -> Unit,
     val onReorderSchedules: (List<LockSchedule>) -> Unit,
@@ -663,6 +808,101 @@ class ReorderActions(
     val onReorderCalendars: (List<CalendarTrigger>) -> Unit,
     val onReorderNfcTags: (List<NfcTag>) -> Unit,
 )
+
+/** Switching an automation on or off from its list row. Each gets the item and its new state. */
+class ToggleActions(
+    val onToggleSchedule: (LockSchedule, Boolean) -> Unit,
+    val onToggleAlarmTrigger: (AlarmTrigger, Boolean) -> Unit,
+    val onToggleLocation: (LocationTrigger, Boolean) -> Unit,
+    val onToggleCalendar: (CalendarTrigger, Boolean) -> Unit,
+    val onToggleNfcTag: (NfcTag, Boolean) -> Unit,
+    val onToggleWake: (WakeTrigger, Boolean) -> Unit,
+)
+
+/**
+ * "⏳ Active in 0:45" for an automation in its one-minute wait, or null. Ticks every second while
+ * any wait is running.
+ */
+@Composable
+private fun rememberCooldownText(cooldowns: Map<AutomationKey, Long>): (AutomationKey) -> String? {
+    val context = LocalContext.current
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(cooldowns) {
+        now = System.currentTimeMillis()
+        while (cooldowns.values.any { it > now }) {
+            delay(1_000)
+            now = System.currentTimeMillis()
+        }
+    }
+    return { key ->
+        cooldowns[key]?.takeIf { it > now }?.let { untilMs ->
+            context.getString(R.string.automation_active_in, formatDurationClock(untilMs - now))
+        }
+    }
+}
+
+/** Settings → Beacon places: how quickly they react by default (each place can choose its own). */
+@Composable
+private fun BeaconTimingCard(preset: BeaconPreset, custom: BeaconTiming, onChange: (BeaconPreset, BeaconTiming) -> Unit) {
+    val context = LocalContext.current
+    var editing by remember { mutableStateOf(false) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Text(
+                stringResource(R.string.beacon_settings_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            SettingsRow(
+                icon = Icons.Filled.Speed,
+                title = stringResource(R.string.beacon_timing_title) + ": " + stringResource(beaconPresetLabel(preset)),
+                summary = timingSummary(context, BeaconTiming.of(preset, custom)),
+                onClick = { editing = true },
+            )
+            Text(
+                stringResource(R.string.beacon_timing_settings_desc),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+    }
+    if (editing) {
+        BeaconTimingDialog(
+            preset = preset,
+            custom = custom,
+            defaultTiming = null,
+            onConfirm = { chosen, numbers ->
+                onChange(chosen ?: BeaconPreset.BALANCED, numbers)
+                editing = false
+            },
+            onDismiss = { editing = false },
+        )
+    }
+}
+
+/** Settings → Automations: the one-minute wait after an automation changes. */
+@Composable
+private fun AutomationCooldownCard(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Text(
+                stringResource(R.string.tab_automations),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            SwitchSettingsRow(
+                icon = Icons.Filled.HourglassTop,
+                title = stringResource(R.string.automation_cooldown),
+                summary = stringResource(R.string.automation_cooldown_desc),
+                checked = enabled,
+                onCheckedChange = onChange,
+            )
+        }
+    }
+}
+
+/** How faded a list row is when it isn't ready yet, e.g. an NFC tag that isn't written. */
+private const val DIMMED_ALPHA = 0.5f
 
 /** Space a FloatingActionButton (56 dp + 16 dp margin) needs at the end of a scrolling list. */
 private val FAB_CLEARANCE = 72.dp
@@ -743,6 +983,8 @@ private fun AlarmTriggersCard(
     onEdit: (AlarmTrigger?) -> Unit,
     onReorder: (List<AlarmTrigger>) -> Unit,
     granted: Set<AppPermission>,
+    onToggle: (AlarmTrigger, Boolean) -> Unit,
+    waitText: (Long) -> String?,
 ) {
     val context = LocalContext.current
     val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -756,12 +998,17 @@ private fun AlarmTriggersCard(
                 val profile = trigger.profileId?.let { profilesById[it] }
                 ListRow(
                     title = trigger.name,
-                    subtitle = withPauseNote(
-                        formatAlarmTrigger(context, trigger, appLabel, profile?.name),
-                        pauseNote(context, PermissionNeeds.check(PermissionNeeds.forAlarmTrigger, granted)),
-                    ),
+                    subtitle = listOfNotNull(
+                        withPauseNote(
+                            formatAlarmTrigger(context, trigger, appLabel, profile?.name),
+                            pauseNote(context, PermissionNeeds.check(PermissionNeeds.forAlarmTrigger, granted)),
+                        ),
+                        waitText(trigger.id),
+                    ).joinToString("\n"),
                     onClick = { onEdit(trigger) },
                     leading = { ProfileIcon(automationIcon(trigger.icon, profile), trigger.name) },
+                    trailing = { Switch(checked = trigger.enabled, onCheckedChange = { onToggle(trigger, it) }) },
+                    dimmed = !trigger.enabled,
                 )
             }
             OutlinedButton(onClick = { onEdit(null) }, modifier = Modifier.fillMaxWidth()) {
@@ -876,7 +1123,7 @@ private fun SetupRow(label: String, done: Boolean, onFix: () -> Unit) {
     }
 }
 
-/** Theme (System / Light / Dark / OLED black) and icons in the lock-screen app picker. */
+/** Theme (System / Light / Dark / OLED black), and icons, clock, sizes and font of the lock-screen app picker. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppearanceCard(
@@ -884,6 +1131,7 @@ private fun AppearanceCard(
     onChange: (ThemeMode) -> Unit,
     showPickerIcons: Boolean,
     onShowPickerIconsChange: (Boolean) -> Unit,
+    pickerAppearance: PickerAppearance,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -911,6 +1159,8 @@ private fun AppearanceCard(
             }
             SwitchRow(stringResource(R.string.show_app_icons), showPickerIcons, onShowPickerIconsChange)
             Text(stringResource(R.string.show_app_icons_hint), style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider()
+            PickerAppearanceSection(pickerAppearance)
         }
     }
 }
@@ -937,7 +1187,6 @@ private fun ProfilesCard(
     onEdit: (LockProfile?) -> Unit,
     onStart: (LockProfile, Long) -> Unit,
     onReorder: (List<LockProfile>) -> Unit,
-    presetsSec: List<Long>,
     granted: Set<AppPermission>,
 ) {
     val context = LocalContext.current
@@ -981,7 +1230,6 @@ private fun ProfilesCard(
     starting?.let { profile ->
         StartProfileDialog(
             profile = profile,
-            presetsSec = presetsSec,
             onStart = { durationMs ->
                 starting = null
                 onStart(profile, durationMs)
@@ -997,6 +1245,9 @@ private fun SchedulesCard(
     profiles: List<LockProfile>,
     onEdit: (LockSchedule?) -> Unit,
     onReorder: (List<LockSchedule>) -> Unit,
+    clashes: Map<Long, String>,
+    onToggle: (LockSchedule, Boolean) -> Unit,
+    waitText: (Long) -> String?,
 ) {
     val context = LocalContext.current
     val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -1010,9 +1261,11 @@ private fun SchedulesCard(
                 val profile = profilesById[schedule.profileId]
                 ListRow(
                     title = formatSchedule(context, schedule, profile?.name),
-                    subtitle = null,
+                    subtitle = listOfNotNull(clashes[schedule.id], waitText(schedule.id)).joinToString("\n").ifEmpty { null },
                     onClick = { onEdit(schedule) },
                     leading = { ProfileIcon(automationIcon(schedule.icon, profile), profile?.name.orEmpty()) },
+                    trailing = { Switch(checked = schedule.enabled, onCheckedChange = { onToggle(schedule, it) }) },
+                    dimmed = !schedule.enabled,
                 )
             }
             OutlinedButton(
@@ -1033,10 +1286,12 @@ private fun ListRow(
     onClick: () -> Unit,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    dimmed: Boolean = false,
 ) {
     Row(
         Modifier
             .fillMaxWidth()
+            .alpha(if (dimmed) DIMMED_ALPHA else 1f)
             .clickable(onClick = onClick)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1136,6 +1391,7 @@ private fun QuickLockSection(
             settings = quickLock,
             presetsSec = presetsSec,
             nfcTags = nfcTags,
+            lockId = QUICK_LOCK_ID,
             lengthTitle = stringResource(R.string.lock_length),
             onChange = actions.onQuickSettingsChange,
             onEditAllowedApps = actions.onEditQuickApps,
@@ -1263,37 +1519,31 @@ fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Uni
     }
 }
 
-/** ▶ Start from a profile: pick the length (prefilled with the profile's default), then lock. */
+/** ▶ Start from a profile: confirm, then lock for the profile's own length. */
 @Composable
 private fun StartProfileDialog(
     profile: LockProfile,
-    presetsSec: List<Long>,
     onStart: (durationMs: Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val duration = rememberDurationInputState(profile.defaultDurationSec * 1_000, key = profile.id)
-    val durationMs = duration.durationMs
+    val durationMs = profile.defaultDurationSec * 1_000
+    val length = formatDurationLabel(durationMs)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.profile_start_title, profile.name)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    when {
+                        !profile.bypassEnabled -> stringResource(R.string.start_confirm_body, length)
+                        profile.bypassWaitMinutes == 0 -> stringResource(R.string.start_confirm_body_instant, length)
+                        else -> stringResource(R.string.start_confirm_body_bypass, length, profile.bypassWaitMinutes)
+                    }
+                )
                 Text(formatProfileSummary(LocalContext.current, profile), style = MaterialTheme.typography.bodySmall)
-                DurationPresetChips(presetsSec, durationMs, onPick = { ms ->
-                    val seconds = ms / 1_000
-                    duration.hoursText = (seconds / 3600).toString()
-                    duration.minutesText = ((seconds % 3600) / 60).toString()
-                    duration.secondsText = (seconds % 60).toString()
-                })
-                DurationInput(duration)
-                Text(stringResource(R.string.start_confirm_no_end_early), style = MaterialTheme.typography.bodySmall)
             }
         },
-        confirmButton = {
-            TextButton(onClick = { durationMs?.let(onStart) }, enabled = durationMs != null) {
-                Text(stringResource(R.string.start_confirm_yes))
-            }
-        },
+        confirmButton = { TextButton(onClick = { onStart(durationMs) }) { Text(stringResource(R.string.start_confirm_go)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },
     )
 }
@@ -1311,7 +1561,9 @@ private fun ConfirmLockDialog(
         title = { Text(stringResource(R.string.start_confirm_title)) },
         text = {
             Text(
-                if (bypassWaitMinutes != null) {
+                if (bypassWaitMinutes == 0) {
+                    stringResource(R.string.start_confirm_body_instant, formatDurationLabel(durationMs))
+                } else if (bypassWaitMinutes != null) {
                     stringResource(R.string.start_confirm_body_bypass, formatDurationLabel(durationMs), bypassWaitMinutes)
                 } else {
                     stringResource(R.string.start_confirm_body, formatDurationLabel(durationMs))

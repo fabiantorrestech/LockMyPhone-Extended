@@ -5,6 +5,8 @@
 
 | ADR | Title | Status | Supersedes |
 | --- | --- | --- | --- |
+| [0006](0006-native-beacon-handling-matched-by-device-or-format.md) | Native beacon handling, matched by device or format | Accepted | — |
+| [0005](0005-one-lock-at-a-time-ranked-by-kind.md) | One lock at a time, ranked by kind | Accepted | — |
 | [0004](0004-detect-locations-with-play-services-geofencing-or-built-in-location.md) | Detect locations with Play Services geofencing, or built-in location as an option | Accepted | — |
 | [0003](0003-store-profiles-and-schedules-in-room-in-device-protected-storage.md) | Store profiles and schedules in Room, in device-protected storage | Accepted | — |
 | [0002](0002-enforce-locks-with-device-admin-and-accessibility.md) | Enforce locks with Device Admin and an Accessibility service | Accepted | — |

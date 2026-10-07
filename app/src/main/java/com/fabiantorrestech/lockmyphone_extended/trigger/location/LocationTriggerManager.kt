@@ -28,12 +28,42 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmDayRules
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToInt
 import com.fabiantorrestech.lockmyphone_extended.trigger.schedule.ScheduleCalculator
 import com.fabiantorrestech.lockmyphone_extended.trigger.schedule.ScheduleWindow
 import java.time.ZonedDateTime
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSource
+import com.fabiantorrestech.lockmyphone_extended.core.lock.StartResult
 
 /** Which [PresenceEngine] watches the places (Settings → Location engine). */
 enum class LocationEngineChoice { PLAY_SERVICES, BUILT_IN }
+
+/** What a Refresh found about the place that started the running lock. */
+sealed interface RefreshResult {
+    /** You're still there; the lock stays. */
+    data class StillHere(val placeName: String) : RefreshResult
+
+    /** You've left; its lock ended. */
+    data class Left(val placeName: String) : RefreshResult
+
+    /** No clear reading (no fix, Bluetooth off, permission missing); the lock stays. */
+    data class Unknown(val placeName: String) : RefreshResult
+
+    /** The running lock wasn't started by a place that unlocks when you leave. */
+    data object NotRefreshable : RefreshResult
+}
+
+/**
+ * One reading of a (maybe unsaved) place's signals, for Test now.
+ *
+ * @param heard every beacon and device key heard in a short scan, with its trimmed-mean signal;
+ *   null when it couldn't scan (no permission, Bluetooth off) or the place needs no scan.
+ */
+data class PlaceTestReading(
+    val readings: Readings,
+    val heard: Map<String, Int>?,
+)
 
 /** The Wi-Fi network the phone is connected to right now. */
 data class ConnectedWifi(val bssid: String, val ssid: String?)
@@ -51,10 +81,12 @@ class LocationTriggerManager(
     private val lockStarter: ProfileLockStarter,
     private val engineChoice: () -> LocationEngineChoice,
     private val dayStartMinutes: () -> Int,
+    /** The default beacon timing (Settings → Beacons); places can have their own. */
+    private val defaultBeaconTiming: () -> BeaconTiming = { BeaconTiming.BALANCED },
 ) {
     val playServices = PlayServicesEngine(context)
     val beaconScanner = BeaconScanner(context)
-    private val beaconTracker = BeaconTracker(context)
+    private val beaconTracker = BeaconTracker(context) { place -> place.beaconTiming(defaultBeaconTiming()) }
     private val btConnections = BtConnectionTracker(context)
 
     /** Called when you arrive at any place, so "Only while at…" schedules and calendar triggers can start. */
@@ -69,6 +101,18 @@ class LocationTriggerManager(
             LockApp.container(context).appScope.launch { onWake(freshFix = false) }
         }
     }
+    /** Networks this phone has connected to, for the network picker. */
+    val wifiHistory = WifiHistory(context)
+
+    private var scanResultsReceiverRegistered = false
+    private val scanResultsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            LockApp.container(context).appScope.launch {
+                updateScanPlan(withContext(Dispatchers.IO) { database.locationTriggerDao().getEnabled() })
+            }
+        }
+    }
+
     private val builtIn = BuiltInEngine(context)
     private val alarmManager = context.getSystemService(AlarmManager::class.java)
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
@@ -90,6 +134,7 @@ class LocationTriggerManager(
     /** Registers (or removes) the engine and the Wi-Fi callback to match the enabled triggers. */
     suspend fun sync() {
         val triggers = withContext(Dispatchers.IO) { database.locationTriggerDao().getEnabled() }
+        stateStore.setEndsOnLeave(triggers.filter(::endsOnLeave).map { it.id }.toSet())
         val engine = activeEngine()
         listOf(playServices, builtIn).filter { it !== engine }.forEach { runCatching { it.stop() } }
         // Beacons and the charger work without location; GPS and Wi-Fi need it.
@@ -104,18 +149,34 @@ class LocationTriggerManager(
         engine.start(triggers)
         scheduleNextSlotStart(triggers)
         runCatching { connectivity.unregisterNetworkCallback(wifiIntent) }
-        if (triggers.any { it.usesWifi }) {
+        connectedWifi()?.let(wifiHistory::record)
+        // Wi-Fi as a signal or a "listen harder" zone, and to note networks for the network picker.
+        if (triggers.isNotEmpty()) {
             val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
             connectivity.registerNetworkCallback(request, wifiIntent)
         }
     }
 
     private suspend fun watchBeaconsAndCharger(triggers: List<LocationTrigger>) {
-        val scanPlaces = triggers.filter { scanKeys(it).isNotEmpty() }
-        if (scanPlaces.isEmpty()) beaconScanner.stopBackground() else beaconScanner.startBackground(scanPlaces)
+        updateScanPlan(triggers)
         // Connections are reported by BtConnectionReceiver; catch up on ones made before it was watching.
         btConnections.refreshFromProfiles(triggers.filter { it.usesBtConnected }.mapNotNull { it.btAddress }.toSet())
-        val chargerPlaces = triggers.any { it.usesCharger }
+        // A Wi-Fi zone also counts networks in range: re-check when the system's scan results change.
+        val wifiZones = triggers.any { it.hasWifiZone() }
+        if (wifiZones && !scanResultsReceiverRegistered) {
+            ContextCompat.registerReceiver(
+                context.applicationContext,
+                scanResultsReceiver,
+                IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
+            scanResultsReceiverRegistered = true
+        } else if (!wifiZones && scanResultsReceiverRegistered) {
+            runCatching { context.applicationContext.unregisterReceiver(scanResultsReceiver) }
+            scanResultsReceiverRegistered = false
+        }
+        // The charger as a signal, or as a beacon place's "listen harder" zone.
+        val chargerPlaces = triggers.any { it.usesCharger || it.hasChargerZone() }
         ChargerSignal.syncJob(context, chargerPlaces)
         if (chargerPlaces && !powerReceiverRegistered) {
             val filter = IntentFilter().apply {
@@ -170,6 +231,22 @@ class LocationTriggerManager(
         return ConnectedWifi(bssid, ssid)
     }
 
+    /** The networks in the system's latest Wi-Fi scan (no new scan), strongest first. Needs location. */
+    @Suppress("DEPRECATION") // ScanResult.SSID still works; its replacement needs API 33.
+    fun nearbyWifi(): List<NearbyWifi> {
+        if (!hasPreciseLocation()) return emptyList()
+        return runCatching { wifiManager.scanResults }.getOrNull().orEmpty()
+            .mapNotNull { result ->
+                val bssid = result.BSSID?.takeUnless { it == HIDDEN_BSSID } ?: return@mapNotNull null
+                NearbyWifi(bssid, result.SSID?.takeIf { it.isNotEmpty() }, result.level)
+            }
+            .sortedByDescending { it.rssi }
+    }
+
+    /** Asks for a fresh Wi-Fi scan. False when Android refuses (it allows about 4 per 2 minutes). */
+    @Suppress("DEPRECATION") // Still the only way to ask for a scan.
+    fun startWifiScan(): Boolean = hasPreciseLocation() && runCatching { wifiManager.startScan() }.getOrDefault(false)
+
     /**
      * @param freshFix take a new precise fix for GPS places; false reuses the last one (beacon,
      *   charger and Wi-Fi wake-ups don't need GPS, and a fix costs battery).
@@ -185,9 +262,11 @@ class LocationTriggerManager(
         val canScan = beaconScanner.hasPermission() && locationServicesOn()
         val canSeeConnections = PairedDevices.hasPermission(context)
         val wifiKnown = hasPreciseLocation() && locationServicesOn()
+        val connected = if (wifiKnown) connectedWifi() else null
+        connected?.let(wifiHistory::record)
         val readings = Readings(
             fix = position,
-            wifiBssid = if (wifiKnown) connectedWifi()?.bssid else null,
+            wifi = connected,
             wifiKnown = wifiKnown,
             charger = if (triggers.any { it.usesCharger }) ChargerSignal.read(context) else null,
             beacon = { place -> if (canScan) beaconTracker.presence(place, nowMs) else Presence.UNKNOWN },
@@ -219,10 +298,144 @@ class LocationTriggerManager(
             if (!AlarmDayRules.isActiveOn(trigger.activeRule, trigger.daysMask, trigger.dates, day)) continue
             withContext(Dispatchers.Main) { act(trigger, transition) }
         }
-        ChargerSignal.syncJob(context, triggers.any { it.usesCharger })
+        ChargerSignal.syncJob(context, triggers.any { it.usesCharger || it.hasChargerZone() })
+        // A beacon heard (or gone), or a zone entered (or left), changes how hard the scan listens.
+        updateScanPlan(triggers)
         // Arriving somewhere may satisfy an "Only while at…" schedule or calendar trigger.
         if (fire && entered) onPlaceEntered?.invoke()
     }
+
+    /**
+     * A changed place's one-minute wait is over (or there was none). If you're there now and it
+     * would be locking, it locks now: "while here", or a time slot that's running. Arrive / leave
+     * places only act on the moment itself, so they wait for the next one.
+     */
+    suspend fun catchUp(placeId: Long) {
+        val trigger = withContext(Dispatchers.IO) { database.locationTriggerDao().getById(placeId) } ?: return
+        if (!trigger.enabled || stateStore.presence(placeId) != Presence.INSIDE) return
+        val now = ZonedDateTime.now()
+        when (trigger.mode) {
+            LocationMode.WHILE_HERE -> {
+                val day = AlarmDayRules.logicalDay(now.toInstant().toEpochMilli(), dayStartMinutes(), now.zone)
+                if (!AlarmDayRules.isActiveOn(trigger.activeRule, trigger.daysMask, trigger.dates, day)) return
+                if (!ownsCurrentLock(trigger)) withContext(Dispatchers.Main) { act(trigger, Transition.ENTER) }
+            }
+            LocationMode.TIME_SLOTS -> {
+                val slots = withContext(Dispatchers.IO) { database.locationSlotDao().getForLocation(placeId) }
+                val window = ScheduleCalculator.activeWindow(slots.map { it.asSchedule() }, now) ?: return
+                val untilSlotEndMs = window.end.toInstant().toEpochMilli() - System.currentTimeMillis()
+                if (untilSlotEndMs > 0 && !ownsCurrentLock(trigger)) {
+                    withContext(Dispatchers.Main) { startLock(trigger, untilSlotEndMs) }
+                }
+            }
+            LocationMode.ON_ARRIVAL, LocationMode.ON_LEAVE, LocationMode.CONDITION_ONLY -> Unit
+        }
+    }
+
+    /**
+     * Adaptive beacon scanning (M19): the shared background scan listens lightly until a beacon
+     * place is boosted (its beacon was heard lately, or one of its zones says you're close), then
+     * as hard as the boosted places' Responsiveness asks. The scanner only restarts on a change.
+     */
+    private fun updateScanPlan(triggers: List<LocationTrigger>) {
+        val scanPlaces = triggers.filter { scanKeys(it).isNotEmpty() }
+        if (scanPlaces.isEmpty()) {
+            beaconScanner.stopBackground()
+            return
+        }
+        val nowMs = System.currentTimeMillis()
+        val wifiReadable = hasPreciseLocation() && locationServicesOn()
+        val connected = if (wifiReadable) connectedWifi() else null
+        // In range counts here too (not for presence): the system's latest scan, no new scan.
+        val inRange by lazy { if (wifiReadable) nearbyWifi() else emptyList() }
+        val charging by lazy { ChargerSignal.read(context).pluggedIn }
+        val fix = lastFix
+        val boosted = scanPlaces.filter { place ->
+            val zoneActive = place.boostZones().any { zone ->
+                when (zone) {
+                    BoostZone.WIFI -> place.wifiZoneNetworks().let { networks ->
+                        WifiRules.matchesAny(networks, connected) || WifiRules.inRange(networks, inRange)
+                    }
+                    BoostZone.GPS -> place.hasCoordinates && (
+                        stateStore.isNear(place.id) ||
+                            fix?.let {
+                                LocationRules.distanceMeters(it.latitude, it.longitude, place.latitude, place.longitude) <=
+                                    place.radiusMeters + BoostRules.GPS_ZONE_MARGIN_METERS
+                            } == true
+                        )
+                    BoostZone.CHARGER -> charging
+                }
+            }
+            BoostRules.isBoosted(beaconTracker.heardRecently(place, nowMs), zoneActive)
+        }
+        val plan = BeaconTiming.scanPlan(boosted.map { it.beaconTiming(defaultBeaconTiming()) })
+        if (boosted.isNotEmpty()) Log.d(TAG, "Listening harder for ${boosted.joinToString { "'${it.name}'" }}")
+        beaconScanner.startBackground(scanPlaces, plan)
+    }
+
+    /** Whether the running lock was started by a place that unlocks when you leave, so Refresh can end it. */
+    fun isRefreshable(source: LockSource): Boolean =
+        source.kind == LockKind.PLACE && source.ownerId?.let(stateStore::endsOnLeave) == true
+
+    /**
+     * Refresh: checks right now whether you're still at the place that started the running lock,
+     * and ends its lock if you've left. One short scan / fix decides, without the usual waits
+     * (45 s to count as near, 2 min of silence to count as away). Main-safe; takes up to ~25 s.
+     */
+    suspend fun refreshNow(): RefreshResult {
+        val source = (lockController.state.value as? LockState.Locked)?.session?.source
+        if (source == null || !isRefreshable(source)) return RefreshResult.NotRefreshable
+        val place = withContext(Dispatchers.IO) { database.locationTriggerDao().getById(source.ownerId!!) }
+            ?: return RefreshResult.NotRefreshable
+        val nowMs = System.currentTimeMillis()
+        if (scanKeys(place).isNotEmpty() && beaconScanner.hasPermission() && beaconScanner.isBluetoothOn()) {
+            beaconTracker.applySnapshot(place, beaconScanner.readingsByKey(REFRESH_SCAN_MS), nowMs)
+        }
+        place.btAddress?.takeIf { place.usesBtConnected }?.let { btConnections.refreshFromProfiles(setOf(it)) }
+        val fix = if (place.usesGps) currentFix() else null
+        evaluate(fix, fire = true, freshFix = false)
+        scheduleRecheckIfNear()
+        Log.i(TAG, "Refresh of '${place.name}': ${stateStore.presence(place.id)}")
+        return when {
+            !ownsCurrentLock(place) -> RefreshResult.Left(place.name)
+            stateStore.presence(place.id) == Presence.INSIDE -> RefreshResult.StillHere(place.name)
+            else -> RefreshResult.Unknown(place.name)
+        }
+    }
+
+    /**
+     * Test now: reads [draft]'s signals once, right now (a fresh fix, a short scan), without
+     * changing what the place remembers or starting anything. Takes up to ~25 s.
+     */
+    suspend fun readNow(draft: LocationTrigger): PlaceTestReading {
+        val heard = if (scanKeys(draft).isNotEmpty() && beaconScanner.hasPermission() && beaconScanner.isBluetoothOn()) {
+            // Each key's trimmed mean, the same smoothing the place itself uses.
+            beaconScanner.readingsByKey(REFRESH_SCAN_MS).mapValues { (_, readings) -> BeaconRules.trimmedMean(readings)!!.roundToInt() }
+        } else {
+            null
+        }
+        val canSeeConnections = PairedDevices.hasPermission(context)
+        draft.btAddress?.takeIf { draft.usesBtConnected && canSeeConnections }?.let { btConnections.refreshFromProfiles(setOf(it)) }
+        val wifiKnown = hasPreciseLocation() && locationServicesOn()
+        fun scanned(key: String?, threshold: Int): Presence = when {
+            heard == null || key == null -> Presence.UNKNOWN
+            (heard[key] ?: Int.MIN_VALUE) >= threshold -> Presence.INSIDE
+            else -> Presence.OUTSIDE
+        }
+        val readings = Readings(
+            fix = if (draft.usesGps) currentFix() else null,
+            wifi = if (wifiKnown) connectedWifi() else null,
+            wifiKnown = wifiKnown,
+            charger = if (draft.usesCharger) ChargerSignal.read(context) else null,
+            beacon = { place -> scanned(place.beaconKey, place.beaconRssiThreshold) },
+            btConnected = { address -> if (canSeeConnections) btConnections.presence(address) else Presence.UNKNOWN },
+            btNearby = { place -> scanned(nearbyDeviceKey(place), place.btRssiThreshold) },
+        )
+        return PlaceTestReading(readings, heard)
+    }
+
+    /** What the background check knows about [place]'s beacon (or nearby device): for the editor's warning. */
+    fun beaconStatus(place: LocationTrigger, device: Boolean): BeaconStatus? = beaconTracker.status(place, device)
 
     /** Whether you're at the place [placeId] as last worked out (for "Only while at…" conditions). */
     fun isAt(placeId: Long): Boolean = stateStore.presence(placeId) == Presence.INSIDE
@@ -245,18 +458,19 @@ class LocationTriggerManager(
         when {
             // The slot began while you're here.
             startedJustNow && presence == Presence.INSIDE && !ownsCurrentLock(trigger) ->
-                startLock(trigger, untilSlotEndMs, ownsLock = true)
+                startLock(trigger, untilSlotEndMs)
             // You arrived or came back during the slot.
             transition == Transition.ENTER && trigger.lockOnReturn && !ownsCurrentLock(trigger) ->
-                startLock(trigger, untilSlotEndMs, ownsLock = true)
+                startLock(trigger, untilSlotEndMs)
             // You left during the slot: unlock, or keep the lock (it already ends with the slot).
             transition == Transition.EXIT && !trigger.stayLockedAfterLeaving -> endLockIfOwned(trigger)
         }
     }
 
+    /** The running lock is the one this place started. */
     private fun ownsCurrentLock(trigger: LocationTrigger): Boolean {
-        val session = (lockController.state.value as? LockState.Locked)?.session ?: return false
-        return stateStore.ownsLock(trigger.id, session.startedAtMs) && lockController.isLockActive()
+        val source = (lockController.state.value as? LockState.Locked)?.session?.source ?: return false
+        return source.kind == LockKind.PLACE && source.ownerId == trigger.id && lockController.isLockActive()
     }
 
     /** One exact alarm at the next slot start of any "during time slots" place. */
@@ -284,7 +498,7 @@ class LocationTriggerManager(
     private suspend fun act(trigger: LocationTrigger, transition: Transition) {
         val fired = when (trigger.mode) {
             LocationMode.WHILE_HERE -> when (transition) {
-                Transition.ENTER -> startLock(trigger, WHILE_HERE_CAP_MS, ownsLock = true)
+                Transition.ENTER -> startLock(trigger, WHILE_HERE_CAP_MS)
                 Transition.EXIT -> {
                     endLockIfOwned(trigger)
                     false
@@ -294,8 +508,8 @@ class LocationTriggerManager(
             LocationMode.TIME_SLOTS -> false
             // Only used by "Only while at…" conditions.
             LocationMode.CONDITION_ONLY -> false
-            LocationMode.ON_ARRIVAL -> transition == Transition.ENTER && startLock(trigger, durationMs = null, ownsLock = false)
-            LocationMode.ON_LEAVE -> transition == Transition.EXIT && startLock(trigger, durationMs = null, ownsLock = false)
+            LocationMode.ON_ARRIVAL -> transition == Transition.ENTER && startLock(trigger, durationMs = null)
+            LocationMode.ON_LEAVE -> transition == Transition.EXIT && startLock(trigger, durationMs = null)
         }
         if (fired && trigger.activeRule == AlarmActiveRule.ONCE) {
             withContext(Dispatchers.IO) { database.locationTriggerDao().update(trigger.copy(enabled = false)) }
@@ -304,27 +518,27 @@ class LocationTriggerManager(
         }
     }
 
-    /** @param durationMs null = the lock's own length. */
-    private suspend fun startLock(trigger: LocationTrigger, durationMs: Long?, ownsLock: Boolean): Boolean {
+    /**
+     * Returns true if it locked. A stronger or equal lock running means it's skipped (ADR 0005).
+     *
+     * @param durationMs null = the lock's own length.
+     */
+    private suspend fun startLock(trigger: LocationTrigger, durationMs: Long?): Boolean {
         val label = context.getString(R.string.location_lock_label, trigger.name)
         val profileId = trigger.profileId
-        if (profileId == null) {
-            lockStarter.startQuick(durationMs = durationMs, label = label)
+        val result = if (profileId == null) {
+            lockStarter.startQuick(durationMs = durationMs, label = label, kind = LockKind.PLACE, ownerId = trigger.id)
         } else {
             val profile = withContext(Dispatchers.IO) { database.profileDao().getById(profileId) } ?: return false
-            lockStarter.start(profile, durationMs = durationMs, label = label)
+            lockStarter.start(profile, durationMs = durationMs, label = label, kind = LockKind.PLACE, ownerId = trigger.id)
         }
-        if (ownsLock) {
-            (lockController.state.value as? LockState.Locked)?.let { stateStore.setLockOwner(trigger.id, it.session.startedAtMs) }
-        }
-        Log.i(TAG, "'${trigger.name}' started a lock")
-        return true
+        Log.i(TAG, "'${trigger.name}': $result")
+        return result is StartResult.Started || result is StartResult.Replaced
     }
 
     /** Leaving a "while here" place ends the lock, but only one that this place started. */
     private fun endLockIfOwned(trigger: LocationTrigger) {
-        val session = (lockController.state.value as? LockState.Locked)?.session ?: return
-        if (!stateStore.ownsLock(trigger.id, session.startedAtMs)) return
+        if (!ownsCurrentLock(trigger)) return
         Log.i(TAG, "Left '${trigger.name}'; ending its lock")
         lockController.endLockRemotely()
     }
@@ -338,14 +552,28 @@ class LocationTriggerManager(
         val nowMs = System.currentTimeMillis()
         val nearGeofence = activeEngine() === playServices && stateStore.isNearAny()
         // "Away" is noticed by silence, and unplugging may happen while the app isn't running.
-        val beaconOrCharger = beaconTracker.needsRecheck(triggers, nowMs) ||
-            (triggers.any { it.usesCharger } && ChargerSignal.read(context).pluggedIn)
-        if (nearGeofence || beaconOrCharger) {
-            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + RECHECK_MS, recheckIntent)
-        } else {
+        val chargerPlugged = triggers.any { it.usesCharger } && ChargerSignal.read(context).pluggedIn
+        val beaconMs = beaconTracker.recheckInterval(triggers, nowMs)
+        val intervalMs = listOfNotNull(
+            RECHECK_MS.takeIf { nearGeofence || chargerPlugged },
+            beaconMs,
+        ).minOrNull()
+        if (intervalMs == null) {
             alarmManager.cancel(recheckIntent)
+            return
+        }
+        val atMs = System.currentTimeMillis() + intervalMs
+        // Short beacon re-checks (Fast / Advanced) need an exact alarm to be on time; Android may still stretch it while idle.
+        if (intervalMs < RECHECK_MS && alarmManager.canScheduleExactAlarms()) {
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, recheckIntent)
+        } else {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, recheckIntent)
         }
     }
+
+    /** Leaving ends this place's lock: "while here", or time slots set to unlock on leaving. */
+    private fun endsOnLeave(place: LocationTrigger): Boolean =
+        place.mode == LocationMode.WHILE_HERE || (place.mode == LocationMode.TIME_SLOTS && !place.stayLockedAfterLeaving)
 
     private fun granted(permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
@@ -359,6 +587,9 @@ class LocationTriggerManager(
         /** A slot-start alarm can arrive a little late; within this, it still counts as "just started". */
         const val SLOT_START_GRACE_MS = 5L * 60 * 1_000
         const val RECHECK_MS = 2L * 60 * 1_000
+
+        /** Long enough to hear a beacon that advertises every second or so a few times. */
+        const val REFRESH_SCAN_MS = 8_000L
         // Within the time Android gives a background broadcast.
         const val FIX_TIMEOUT_MS = 20_000L
 

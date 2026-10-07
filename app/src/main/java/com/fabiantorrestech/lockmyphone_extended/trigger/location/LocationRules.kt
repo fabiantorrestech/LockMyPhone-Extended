@@ -22,6 +22,7 @@ data class ChargerReading(val pluggedIn: Boolean, val wireless: Boolean)
 /**
  * Everything the signals are read from at one moment.
  *
+ * @param wifi the network connected now, if any.
  * @param wifiKnown false when the Wi-Fi network can't be read (no location permission, or
  *   location services off): then Wi-Fi says nothing, rather than "not connected".
  * @param beacon whether a beacon place's beacon is near right now.
@@ -30,7 +31,7 @@ data class ChargerReading(val pluggedIn: Boolean, val wireless: Boolean)
  */
 data class Readings(
     val fix: Fix?,
-    val wifiBssid: String?,
+    val wifi: ConnectedWifi?,
     val wifiKnown: Boolean = true,
     val charger: ChargerReading?,
     val beacon: (LocationTrigger) -> Presence,
@@ -70,7 +71,8 @@ object LocationRules {
                 add(
                     when {
                         !readings.wifiKnown -> Presence.UNKNOWN
-                        trigger.wifiBssid.equals(readings.wifiBssid, ignoreCase = true) -> Presence.INSIDE
+                        // Connected to any one of the place's networks.
+                        WifiRules.matchesAny(trigger.wifiNetworks, readings.wifi) -> Presence.INSIDE
                         else -> Presence.OUTSIDE
                     }
                 )

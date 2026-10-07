@@ -29,7 +29,8 @@ enum class UnlockResumeMode {
  * @param resumeMode what a resumed pass does after an unlock.
  * @param unlockChoiceSeconds with [UnlockResumeMode.SHOW_LOCK_SCREEN], how long the countdown
  *   screen waits for the user to pick an app before locking again.
- * @param nfcUnlock which NFC tags set to "End it, if the lock allows NFC" can end this lock.
+ * @param source where this lock came from: its kind (which decides what may replace it), the
+ *   profile or Quick lock it uses, and the automation or tag that started it.
  */
 data class LockSession(
     val label: String,
@@ -45,7 +46,7 @@ data class LockSession(
     val passPaused: Boolean = false,
     val resumeMode: UnlockResumeMode = UnlockResumeMode.RESUME_APP,
     val unlockChoiceSeconds: Int = DEFAULT_UNLOCK_CHOICE_SECONDS,
-    val nfcUnlock: NfcUnlock = NfcUnlock.NONE,
+    val source: LockSource = LockSource.UNKNOWN,
 ) {
     val bypassAllowed: Boolean get() = bypassDelayMs != null
     val bypassPending: Boolean get() = bypassEndsAtMs != null
@@ -58,27 +59,50 @@ data class LockSession(
     }
 }
 
+/** The lock ID of Quick lock, next to profile IDs (as text) in [LockSource.lockId] and NFC tag links. */
+const val QUICK_LOCK_ID = "quick"
+
 /**
- * Which NFC tags can end a lock through "End it, if the lock allows NFC". Only tags written by
- * the app can end a lock at all; this narrows it down to the ones chosen for the lock.
- *
- * @param anyTag every written tag may end it.
- * @param tagIds the chosen tags (their IDs as text), used when [anyTag] is off.
+ * What started a lock. Only one lock runs at a time: a new lock replaces the running one only if
+ * its kind weighs more; otherwise it's refused (ADR 0005). Emergency mode will weigh 4.
  */
-data class NfcUnlock(val anyTag: Boolean = false, val tagIds: Set<String> = emptySet()) {
+enum class LockKind(val weight: Int) {
+    /** Quick lock or a profile's Start button. */
+    MANUAL(1),
 
-    fun allows(tagId: Long): Boolean = anyTag || tagId.toString() in tagIds
+    /** An NFC tag (only tags set to take over can start one during a lock). */
+    NFC(2),
 
-    /** Two locks merged: only the tags both of them allow. */
-    fun stricter(other: NfcUnlock): NfcUnlock = when {
-        anyTag && other.anyTag -> NfcUnlock(anyTag = true)
-        anyTag -> NfcUnlock(tagIds = other.tagIds)
-        other.anyTag -> NfcUnlock(tagIds = tagIds)
-        else -> NfcUnlock(tagIds = tagIds intersect other.tagIds)
-    }
+    /** The intent API (MacroDroid, Tasker…). */
+    INTENT(2),
 
+    /** Automatic commitments, set up in advance. */
+    SCHEDULE(3),
+    CALENDAR(3),
+    PLACE(3),
+    ALARM(3),
+
+    /** Morning lock: the first unlock after sleeping, or a dismissed alarm (M22). */
+    WAKE(3),
+}
+
+/**
+ * Where a lock came from.
+ *
+ * @param lockId the profile it uses (its ID as text), or [QUICK_LOCK_ID].
+ * @param ownerId the schedule, calendar trigger, place, alarm trigger or NFC tag that started it;
+ *   null for manual and intent locks.
+ * @param name the lock's name for messages (the profile's name; empty for Quick lock).
+ */
+data class LockSource(
+    val kind: LockKind,
+    val lockId: String,
+    val ownerId: Long? = null,
+    val name: String = "",
+) {
     companion object {
-        val NONE = NfcUnlock()
+        /** A lock saved before sources existed. */
+        val UNKNOWN = LockSource(LockKind.MANUAL, QUICK_LOCK_ID)
     }
 }
 

@@ -130,6 +130,9 @@ class BackupManager(
                 slots = contents.locationSlots,
                 calendarTriggers = calendars,
                 nfcTags = contents.nfcTags,
+                beaconNames = contents.beaconNames,
+                // Place IDs are kept on restore, so sleep places still point at the right places.
+                wakeTriggers = contents.wakeTriggers,
             )
         }
         settings().restore(contents.settings)
@@ -160,6 +163,8 @@ class BackupManager(
             calendarTriggers = calendarTriggers,
             calendars = calendarReader.calendars().filter { it.id.toString() in usedCalendarIds },
             nfcTags = database.nfcTagDao().getAll(),
+            beaconNames = database.beaconNameDao().getAll(),
+            wakeTriggers = database.wakeTriggerDao().getAll(),
         )
     }
 

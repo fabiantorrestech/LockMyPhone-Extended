@@ -40,6 +40,20 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
 - **Grayscale:** optional (Android 15+). The screen turns gray when the lock starts and returns to colour when it ends.
 - **One pinned notification** shows the countdown and has the Phone / Allowed apps / Unlock early buttons.
 
+### Which lock wins (one lock at a time)
+Only one lock runs at a time. When a lock tries to start during another, their kinds decide:
+
+| Rank | Kinds |
+|---|---|
+| 1 (strongest) | Commitments you set up in advance: **schedules, calendar triggers, places, alarm triggers** |
+| 2 | **NFC tags** set to *Take over a running lock*, and the **intent API** (MacroDroid, Tasker…) |
+| 3 | **Manual**: Quick lock and a profile's ▶ Start |
+
+- **A stronger lock replaces the running one** with its own settings and its own length (even if that ends sooner).
+- **An equal or weaker lock is refused.** Manual starts and NFC taps say so, e.g. *"Already in a schedule lock (Night) until 7:00 AM!"*. A refused automation is skipped.
+- **Clash warnings:** schedules, places with time slots and calendar triggers that would overlap show *⚠ Clashes with …* in their list and editor (whichever starts first runs; the other is skipped). Places without time slots, alarms, NFC and intent starts can't be predicted.
+- Emergency mode (not built yet) will outrank everything. See [ADR 0005](doc/adr/0005-one-lock-at-a-time-ranked-by-kind.md).
+
 ### Automations (start locks automatically)
 - **Weekly schedules:** days + start and end time, overnight included. Stopping a scheduled lock early (by intent or early unlock) cancels the rest of that window.
 - **Alarm triggers:** lock after you dismiss an alarm. Snoozes don't count.
@@ -70,9 +84,12 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
   - Declined and "free" events can be skipped; the defaults are in Settings.
   - Recurring events work. Moved or deleted events are picked up automatically, and a live "Next match" preview shows what would lock.
 - **NFC tags:** tap a tag to start a lock, end one, or both (start when none is running, end during one).
-  - **During a lock** a tag can: start the lock's early-unlock wait (the default), end it if the lock allows that tag, or end any lock.
-  - **Which tags can end a lock:** chosen per profile and for Quick lock under *Tags that can end this lock*. The default is none; *Any of my written tags* is an option you pick on purpose.
-  - **Only written tags can end a lock.** *Write to tag* puts a random code on the tag, and ending checks both the tag's ID and that code. A tag that was only scanned (or a read-only card) can still start locks and the early-unlock wait.
+  - **Nickname and ID:** each tag has a nickname (e.g. "Fridge") and shows its hardware ID, so you can tell which physical tag runs which lock.
+  - **Linked locks:** one lock (the default: a tap starts it straight away), several, or all of them (a tap asks which one to start). Each profile and Quick lock shows *NFC tags linked here*.
+  - **During a lock, a Start tag** says a lock is already running, unless *Take over a running lock* is on: then it switches a manual lock to its own (it never replaces a schedule, calendar, place or alarm lock).
+  - **During a lock** a tag can: start the lock's early-unlock wait (the default), end it if it's one of the tag's linked locks, or end any lock.
+  - **Only written tags can end a lock.** *Write to tag* puts a link with a random code on the tag, and ending checks both the tag's ID and that code. A tag that was only scanned (or a read-only card) can still start locks and the early-unlock wait.
+  - **Saving writes the tag:** Save on a new tag asks you to hold it to the phone and writes it; *Save without writing* keeps it, dimmed in the list until it's written.
   - **After an unlock** during a lock that a tag can end, the countdown screen waits a few seconds (default 10) for the tag before locking again. Ending only works there, never from a tag tapped elsewhere.
   - **Scan tag vs Write to tag:** *Scan* only reads the tag's ID, so the tag works while the app is reading (the countdown screen, the editor). *Write* also stores the app's record and code on the tag, so it can end locks and works while the app is closed.
   - **Limit:** the code on a tag can be read by any NFC app. Copying a tag still needs your physical tag and a special tag whose ID can be changed.
@@ -133,7 +150,7 @@ The checklist on the **Settings** tab only shows what's still missing:
 ## Common use cases
 
 - **"No phone for the first hour after I wake up" (weekdays):** an alarm trigger on your QRAlarm alarm → a 1-hour profile, with Chosen weekdays Mon–Fri.
-- **"Only a walk to the kitchen ends it":** a written NFC tag on the fridge set to *End a lock → End it, if the lock allows NFC*, chosen under *Tags that can end this lock* on the profiles you want it for. Or keep the default, *Start the early-unlock wait*, so the walk only starts the countdown.
+- **"Only a walk to the kitchen ends it":** a written NFC tag nicknamed "Fridge", linked to the profiles you want it for and set to *End a lock → End it, if it's one of this tag's locks*. Or keep the default, *Start the early-unlock wait*, so the walk only starts the countdown.
 - **Weekends, when you don't know which alarm will wake you:** an alarm trigger set to *The first alarm of the day* from Clock + QRAlarm, active Sat–Sun.
 - **Bedtime:** a schedule, 22:30 → 07:00 every day, starting a "Night" profile with Alarms-only DND and grayscale.
 - **Focus at the office:** a location with *During time slots* Mon–Fri 9:00–12:00 and 13:00–17:00, matched by *GPS or Wi-Fi* (the office router makes it exact indoors).
@@ -207,6 +224,7 @@ Recorded in [`doc/adr/`](doc/adr/):
 2. Enforce locks with Device Admin + an Accessibility service (not Device Owner)
 3. Store profiles and schedules in Room, in device-protected storage
 4. Detect locations with Play Services geofencing, with built-in location as an option
+5. One lock at a time, ranked by kind
 
 ### Dependencies
 - AndroidX Core, Activity Compose, Lifecycle
@@ -222,7 +240,7 @@ Send a **broadcast** explicitly to package `com.fabiantorrestech.lockmyphone_ext
 
 | Action | Extras |
 |---|---|
-| `com.fabiantorrestech.lockmyphone_extended.action.START_LOCK` | `profile` (a profile name; without it, Quick lock is used), plus optionally `duration_min` or `duration_sec` |
+| `com.fabiantorrestech.lockmyphone_extended.action.START_LOCK` | `profile` (a profile name; without it, Quick lock is used), plus optionally `duration_min` or `duration_sec`. It replaces a running manual lock; any other running lock refuses it. |
 | `com.fabiantorrestech.lockmyphone_extended.action.STOP_LOCK` | `token`: the secret shown in **Settings → Intent API**. Only works when "Allow stopping a lock by intent" is on. |
 
 Example (adb):

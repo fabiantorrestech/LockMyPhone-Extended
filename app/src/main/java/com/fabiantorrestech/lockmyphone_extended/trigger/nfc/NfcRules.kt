@@ -14,7 +14,10 @@ enum class TapRefusal {
     /** An End tag with no lock running. */
     NO_LOCK_RUNNING,
 
-    /** "End it, if the lock allows NFC", and this lock doesn't list this tag. */
+    /** A Start tag during a lock, without "take over". */
+    ALREADY_LOCKED,
+
+    /** "End it, if it's one of this tag's locks", and the running lock isn't linked to this tag. */
     NFC_NOT_ALLOWED,
 
     /** Set to end locks, but never written by the app, so it has no code. */
@@ -30,8 +33,8 @@ enum class TapRefusal {
 
 /** What a tap does. */
 sealed interface TapOutcome {
-    /** Start (or extend) a lock: [profileId] null = Quick lock; [durationSec] null = its own length. */
-    data class Start(val profileId: Long?, val durationSec: Long?) : TapOutcome
+    /** Start (or extend) one of the tag's linked locks. */
+    data object Start : TapOutcome
     data object StartBypassWait : TapOutcome
     data object EndLock : TapOutcome
     data class Refused(val reason: TapRefusal) : TapOutcome
@@ -51,13 +54,15 @@ object NfcRules {
         if (!tag.enabled) return TapOutcome.Refused(TapRefusal.TAG_OFF)
         if (activeLock == null) {
             return if (tag.startsLocks) {
-                TapOutcome.Start(tag.profileId, tag.durationSec)
+                TapOutcome.Start
             } else {
                 TapOutcome.Refused(TapRefusal.NO_LOCK_RUNNING)
             }
         }
-        // A Start tag during a lock starts its lock too, which can only extend the running one.
-        if (tag.action == NfcTagAction.START) return TapOutcome.Start(tag.profileId, tag.durationSec)
+        // A Start tag during a lock: only a take-over tag tries to start (it wins only over a manual lock).
+        if (tag.action == NfcTagAction.START) {
+            return if (tag.takeOver) TapOutcome.Start else TapOutcome.Refused(TapRefusal.ALREADY_LOCKED)
+        }
         return when (tag.duringLock) {
             NfcDuringLock.START_BYPASS_WAIT -> when {
                 !activeLock.bypassAllowed -> TapOutcome.Refused(TapRefusal.EARLY_UNLOCK_NOT_ALLOWED)
@@ -66,7 +71,7 @@ object NfcRules {
             }
             NfcDuringLock.END_IF_ALLOWED -> when {
                 !tag.written -> TapOutcome.Refused(TapRefusal.NOT_WRITTEN)
-                !activeLock.nfcUnlock.allows(tag.id) -> TapOutcome.Refused(TapRefusal.NFC_NOT_ALLOWED)
+                !tag.links(activeLock.source.lockId) -> TapOutcome.Refused(TapRefusal.NFC_NOT_ALLOWED)
                 else -> endIfCodeMatches(tag, presentedCode)
             }
             NfcDuringLock.END_ANY ->

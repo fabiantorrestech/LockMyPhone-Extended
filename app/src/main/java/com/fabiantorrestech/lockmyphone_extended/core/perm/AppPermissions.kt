@@ -82,6 +82,9 @@ object PermissionNeeds {
 
     val forAlarmTrigger: Set<AppPermission> = setOf(AppPermission.NOTIFICATION_ACCESS)
 
+    /** Morning lock hears unlocks through the accessibility service. */
+    val forWakeTrigger: Set<AppPermission> = setOf(AppPermission.ACCESSIBILITY)
+
     val forNfcTag: Set<AppPermission> = setOf(AppPermission.NFC_ON)
 
     fun forProfile(profile: LockProfile): Set<AppPermission> =

@@ -41,8 +41,10 @@ class LockStateStore(context: Context) {
                     putBoolean(KEY_GRAYSCALE, state.session.grayscale)
                     putString(KEY_RESUME_MODE, state.session.resumeMode.name)
                     putInt(KEY_UNLOCK_CHOICE_SECONDS, state.session.unlockChoiceSeconds)
-                    putBoolean(KEY_NFC_UNLOCK_ANY, state.session.nfcUnlock.anyTag)
-                    putStringSet(KEY_NFC_UNLOCK_TAGS, state.session.nfcUnlock.tagIds)
+                    putString(KEY_SOURCE_KIND, state.session.source.kind.name)
+                    putString(KEY_SOURCE_LOCK_ID, state.session.source.lockId)
+                    putOrRemove(KEY_SOURCE_OWNER_ID, state.session.source.ownerId)
+                    putString(KEY_SOURCE_NAME, state.session.source.name)
                 }
             }
         }
@@ -71,11 +73,21 @@ class LockStateStore(context: Context) {
                     ?.let { saved -> UnlockResumeMode.entries.firstOrNull { it.name == saved } }
                     ?: UnlockResumeMode.RESUME_APP,
                 unlockChoiceSeconds = prefs.getInt(KEY_UNLOCK_CHOICE_SECONDS, LockSession.DEFAULT_UNLOCK_CHOICE_SECONDS),
-                nfcUnlock = NfcUnlock(
-                    anyTag = prefs.getBoolean(KEY_NFC_UNLOCK_ANY, false),
-                    tagIds = prefs.getStringSet(KEY_NFC_UNLOCK_TAGS, null)?.toSet() ?: emptySet(),
-                ),
+                source = readSource(),
             )
+        )
+    }
+
+    /** A lock saved before sources existed reads as [LockSource.UNKNOWN]. */
+    private fun readSource(): LockSource {
+        val kind = prefs.getString(KEY_SOURCE_KIND, null)
+            ?.let { saved -> LockKind.entries.firstOrNull { it.name == saved } }
+            ?: return LockSource.UNKNOWN
+        return LockSource(
+            kind = kind,
+            lockId = prefs.getString(KEY_SOURCE_LOCK_ID, null) ?: QUICK_LOCK_ID,
+            ownerId = prefs.getLongOrNull(KEY_SOURCE_OWNER_ID),
+            name = prefs.getString(KEY_SOURCE_NAME, null).orEmpty(),
         )
     }
 
@@ -101,7 +113,9 @@ class LockStateStore(context: Context) {
         const val KEY_GRAYSCALE = "grayscale"
         const val KEY_RESUME_MODE = "resume_mode"
         const val KEY_UNLOCK_CHOICE_SECONDS = "unlock_choice_seconds"
-        const val KEY_NFC_UNLOCK_ANY = "nfc_unlock"
-        const val KEY_NFC_UNLOCK_TAGS = "nfc_unlock_tags"
+        const val KEY_SOURCE_KIND = "source_kind"
+        const val KEY_SOURCE_LOCK_ID = "source_lock_id"
+        const val KEY_SOURCE_OWNER_ID = "source_owner_id"
+        const val KEY_SOURCE_NAME = "source_name"
     }
 }

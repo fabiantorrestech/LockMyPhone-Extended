@@ -26,5 +26,8 @@ An Android app that recreates Thomas Kahn's *Lock My Phone*: during a lock perio
 
 ## Conventions
 - Keep code explicit and readable. Put lock rules in the pure-Kotlin `LockEngine`, not in Android components.
+- **Planned: Simple vs Pro mode.** The owner finds the number of settings can be overwhelming. Simple mode should show only what non-technical users need, with sensible defaults. Pro mode exposes the fine-grained controls. Examples of Pro-level controls: beacon responsiveness Advanced values, Calibrate at the edge, the 📐 calculator, the live signal meter, and Match by.
+  - Until it's built, give every new setting a sensible default that works without touching it, and put fine-grained controls behind an "Advanced" option, so they can later be hidden in Simple mode.
+  - When planning a feature, say which of its settings are Simple and which are Pro.
 - No tests unless asked.
 - Don't commit `handoffContext/`.

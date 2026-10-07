@@ -1,10 +1,6 @@
 package com.fabiantorrestech.lockmyphone_extended.ui
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Checkbox
-import androidx.compose.ui.Modifier
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.DoNotDisturbOn
@@ -30,7 +26,6 @@ import com.fabiantorrestech.lockmyphone_extended.R
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.isGrayscaleSupported
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.labelRes
-import com.fabiantorrestech.lockmyphone_extended.core.lock.NfcUnlock
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
 
@@ -48,7 +43,6 @@ data class LockSettings(
     val grayscale: Boolean,
     val resumeMode: UnlockResumeMode,
     val choiceSeconds: Int,
-    val nfcUnlock: NfcUnlock,
 )
 
 /**
@@ -56,13 +50,16 @@ data class LockSettings(
  * right away through [onChange]; dialogs only report valid values.
  *
  * @param lengthTitle e.g. "Default length" for a profile, "Length" for Quick lock.
- * @param nfcTags the registered tags, to choose which can end this lock.
+ * @param nfcTags the registered tags, to show which are linked to this lock.
+ * @param lockId this lock's ID (a profile ID as text, or Quick lock's), or null for the Lock
+ *   defaults and unsaved profiles, which no tag can be linked to yet.
  */
 @Composable
 fun LockSettingsSections(
     settings: LockSettings,
     presetsSec: List<Long>,
     nfcTags: List<NfcTag>,
+    lockId: String?,
     lengthTitle: String,
     onChange: (LockSettings) -> Unit,
     onEditAllowedApps: () -> Unit,
@@ -129,7 +126,11 @@ fun LockSettingsSections(
             icon = Icons.Filled.LockOpen,
             title = stringResource(R.string.bypass_switch),
             summary = if (settings.bypassEnabled) {
-                stringResource(R.string.bypass_summary_on, settings.bypassWaitMinutes)
+                if (settings.bypassWaitMinutes == 0) {
+                    stringResource(R.string.bypass_summary_instant)
+                } else {
+                    stringResource(R.string.bypass_summary_on, settings.bypassWaitMinutes)
+                }
             } else {
                 stringResource(R.string.bypass_summary_off)
             },
@@ -138,10 +139,16 @@ fun LockSettingsSections(
         )
         if (settings.bypassEnabled) {
             SectionDivider()
+            // A 0-minute wait is allowed, but then the lock is only a speed bump.
+            if (settings.bypassWaitMinutes == 0) DangerBanner(stringResource(R.string.bypass_instant_warning))
             SettingsRow(
                 icon = Icons.Filled.HourglassEmpty,
                 title = stringResource(R.string.bypass_wait_label),
-                summary = stringResource(R.string.wait_minutes, settings.bypassWaitMinutes),
+                summary = if (settings.bypassWaitMinutes == 0) {
+                    stringResource(R.string.bypass_wait_instant)
+                } else {
+                    stringResource(R.string.wait_minutes, settings.bypassWaitMinutes)
+                },
                 onClick = { editing = LockDialog.BYPASS_WAIT },
             )
         }
@@ -155,13 +162,15 @@ fun LockSettingsSections(
             },
             onClick = { editing = LockDialog.RESUME },
         )
-        SectionDivider()
-        SettingsRow(
-            icon = Icons.Filled.Nfc,
-            title = stringResource(R.string.nfc_unlock_tags_title),
-            summary = nfcUnlockSummary(settings.nfcUnlock, nfcTags),
-            onClick = { editing = LockDialog.NFC_TAGS },
-        )
+        if (lockId != null) {
+            SectionDivider()
+            SettingsRow(
+                icon = Icons.Filled.Nfc,
+                title = stringResource(R.string.nfc_linked_title),
+                summary = linkedTagsSummary(lockId, nfcTags) + "\n" + stringResource(R.string.nfc_linked_hint),
+                onClick = null,
+            )
+        }
     }
 
     when (editing) {
@@ -192,19 +201,11 @@ fun LockSettingsSections(
             title = stringResource(R.string.bypass_wait_label),
             label = stringResource(R.string.minutes_label),
             initial = settings.bypassWaitMinutes,
-            range = 1..MAX_BYPASS_WAIT_MINUTES,
+            // 0 = instant early unlock (warned about above the row).
+            range = 0..MAX_BYPASS_WAIT_MINUTES,
             hint = stringResource(R.string.bypass_hint),
             onConfirm = {
                 onChange(settings.copy(bypassWaitMinutes = it))
-                editing = null
-            },
-            onDismiss = { editing = null },
-        )
-        LockDialog.NFC_TAGS -> NfcUnlockDialog(
-            current = settings.nfcUnlock,
-            tags = nfcTags,
-            onConfirm = {
-                onChange(settings.copy(nfcUnlock = it))
                 editing = null
             },
             onDismiss = { editing = null },
@@ -222,72 +223,13 @@ fun LockSettingsSections(
     }
 }
 
-private enum class LockDialog { LENGTH, DND_LEVEL, BYPASS_WAIT, RESUME, NFC_TAGS }
+private enum class LockDialog { LENGTH, DND_LEVEL, BYPASS_WAIT, RESUME }
 
-/** "None", "Fridge, Desk" or "Any of my written tags". Chosen tags that were deleted don't count. */
+/** The tags linked to this lock ("Fridge, Desk"), or "None". Links are set on each tag. */
 @Composable
-private fun nfcUnlockSummary(nfcUnlock: NfcUnlock, tags: List<NfcTag>): String {
-    if (nfcUnlock.anyTag) return stringResource(R.string.nfc_unlock_any)
-    val names = tags.filter { nfcUnlock.allows(it.id) }.map { it.name }
-    return if (names.isEmpty()) stringResource(R.string.nfc_unlock_none) else names.joinToString(", ")
-}
-
-/** Tick the tags that can end this lock, or "Any of my written tags". Tags that aren't written can't be picked. */
-@Composable
-private fun NfcUnlockDialog(
-    current: NfcUnlock,
-    tags: List<NfcTag>,
-    onConfirm: (NfcUnlock) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var anyTag by remember { mutableStateOf(current.anyTag) }
-    var chosen by remember { mutableStateOf(current.tagIds) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.nfc_unlock_tags_title)) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(stringResource(R.string.nfc_unlock_dialog_hint), style = MaterialTheme.typography.bodySmall)
-                SettingsRow(
-                    icon = null,
-                    title = stringResource(R.string.nfc_unlock_any),
-                    summary = null,
-                    onClick = { anyTag = !anyTag },
-                    trailing = { Checkbox(checked = anyTag, onCheckedChange = { anyTag = it }) },
-                )
-                if (tags.isEmpty()) {
-                    Text(stringResource(R.string.nfc_tags_empty_short), style = MaterialTheme.typography.bodySmall)
-                }
-                tags.forEach { tag ->
-                    val id = tag.id.toString()
-                    val selectable = tag.written && !anyTag
-                    val toggle = { chosen = if (id in chosen) chosen - id else chosen + id }
-                    SettingsRow(
-                        icon = null,
-                        title = tag.name,
-                        summary = if (tag.written) null else stringResource(R.string.nfc_not_written_short),
-                        onClick = toggle,
-                        enabled = selectable,
-                        trailing = {
-                            Checkbox(
-                                checked = anyTag || (tag.written && id in chosen),
-                                onCheckedChange = { toggle() },
-                                enabled = selectable,
-                            )
-                        },
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                // Only tags that still exist and are written are kept.
-                val writtenIds = tags.filter { it.written }.map { it.id.toString() }.toSet()
-                onConfirm(NfcUnlock(anyTag = anyTag, tagIds = if (anyTag) emptySet() else chosen intersect writtenIds))
-            }) { Text(stringResource(android.R.string.ok)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },
-    )
+private fun linkedTagsSummary(lockId: String, tags: List<NfcTag>): String {
+    val names = tags.filter { it.links(lockId) }.map { it.name }
+    return if (names.isEmpty()) stringResource(R.string.nfc_linked_none) else names.joinToString(", ")
 }
 
 private const val MAX_BYPASS_WAIT_MINUTES = 24 * 60

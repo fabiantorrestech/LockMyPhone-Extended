@@ -22,6 +22,18 @@ enum class ResumeDecision {
     SHOW_LOCK_SCREEN,
 }
 
+/** The result of trying to start a lock (ADR 0005: one lock at a time). */
+sealed interface StartDecision {
+    /** No lock was running. */
+    data class Started(val state: LockState.Locked) : StartDecision
+
+    /** A weaker lock was running; [previous] is gone and this one runs instead. */
+    data class Replaced(val state: LockState.Locked, val previous: LockSession) : StartDecision
+
+    /** An equal or stronger lock is running, so nothing changes. */
+    data class Refused(val running: LockSession) : StartDecision
+}
+
 /** What to do when a new app window comes to the front while the device is unlocked. */
 enum class ForegroundDecision { IGNORE, RELOCK }
 
@@ -32,17 +44,10 @@ enum class ForegroundDecision { IGNORE, RELOCK }
 class LockEngine {
 
     /**
-     * Starts a lock of [durationMs]. If a lock is already running, the stricter result wins:
-     * - the later end time (a new trigger can extend a lock but never shorten it)
-     * - early unlock only if both allow it, with the longer wait
-     * - any pending early unlock is cancelled
-     * - DND is on if either lock wants it, at the stricter level of the locks that want it
-     * - grayscale is on if either lock wants it
-     * - showing the lock screen after an unlock beats going straight back to the app, and the
-     *   shorter choice time wins
-     * - NFC tags can end it only if both locks allow that tag
-     *
-     * The allowed apps are merged.
+     * Starts a lock of [durationMs]. Only one lock runs at a time: if one is running, the new
+     * lock replaces it only when its kind weighs more ([LockKind.weight]); then it runs with its
+     * own settings and length, even if that ends sooner. Otherwise it's refused, including when
+     * it's the same automation's own running lock.
      *
      * @param bypassDelayMs the early-unlock wait, or null if early unlock isn't allowed.
      */
@@ -58,65 +63,34 @@ class LockEngine {
         grayscale: Boolean,
         resumeMode: UnlockResumeMode,
         unlockChoiceSeconds: Int,
-        nfcUnlock: NfcUnlock = NfcUnlock.NONE,
-    ): LockState {
+        source: LockSource,
+    ): StartDecision {
         require(durationMs > 0) { "durationMs must be positive" }
         require(bypassDelayMs == null || bypassDelayMs > 0) { "bypassDelayMs must be positive" }
         require(unlockChoiceSeconds > 0) { "unlockChoiceSeconds must be positive" }
-        val requestedEnd = nowMs + durationMs
-        return when (current) {
-            is LockState.Idle -> LockState.Locked(
-                LockSession(
-                    label = label,
-                    startedAtMs = nowMs,
-                    endsAtMs = requestedEnd,
-                    allowedPackages = allowedPackages,
-                    bypassDelayMs = bypassDelayMs,
-                    dndEnabled = dndEnabled,
-                    dndLevel = dndLevel,
-                    grayscale = grayscale,
-                    resumeMode = resumeMode,
-                    unlockChoiceSeconds = unlockChoiceSeconds,
-                    nfcUnlock = nfcUnlock,
-                )
+        val new = LockState.Locked(
+            LockSession(
+                label = label,
+                startedAtMs = nowMs,
+                endsAtMs = nowMs + durationMs,
+                allowedPackages = allowedPackages,
+                bypassDelayMs = bypassDelayMs,
+                dndEnabled = dndEnabled,
+                dndLevel = dndLevel,
+                grayscale = grayscale,
+                resumeMode = resumeMode,
+                unlockChoiceSeconds = unlockChoiceSeconds,
+                source = source,
             )
-            is LockState.Locked -> {
-                val old = current.session
-                val mergedBypass = if (old.bypassDelayMs != null && bypassDelayMs != null) {
-                    maxOf(old.bypassDelayMs, bypassDelayMs)
-                } else {
-                    null
-                }
-                LockState.Locked(
-                    old.copy(
-                        endsAtMs = maxOf(old.endsAtMs, requestedEnd),
-                        allowedPackages = old.allowedPackages + allowedPackages,
-                        passActive = false,
-                        passPaused = false,
-                        bypassDelayMs = mergedBypass,
-                        bypassEndsAtMs = null,
-                        dndEnabled = old.dndEnabled || dndEnabled,
-                        dndLevel = when {
-                            old.dndEnabled && dndEnabled -> DndLevel.stricter(old.dndLevel, dndLevel)
-                            dndEnabled -> dndLevel
-                            else -> old.dndLevel
-                        },
-                        grayscale = old.grayscale || grayscale,
-                        resumeMode = stricterResumeMode(old.resumeMode, resumeMode),
-                        unlockChoiceSeconds = minOf(old.unlockChoiceSeconds, unlockChoiceSeconds),
-                        nfcUnlock = old.nfcUnlock.stricter(nfcUnlock),
-                    )
-                )
-            }
+        )
+        // A lock whose time is up counts as over, even before its end alarm has run.
+        val running = (current as? LockState.Locked)?.session?.takeIf { isActive(current, nowMs) }
+        return when {
+            running == null -> StartDecision.Started(new)
+            source.kind.weight > running.source.kind.weight -> StartDecision.Replaced(new, running)
+            else -> StartDecision.Refused(running)
         }
     }
-
-    private fun stricterResumeMode(a: UnlockResumeMode, b: UnlockResumeMode): UnlockResumeMode =
-        if (a == UnlockResumeMode.SHOW_LOCK_SCREEN || b == UnlockResumeMode.SHOW_LOCK_SCREEN) {
-            UnlockResumeMode.SHOW_LOCK_SCREEN
-        } else {
-            UnlockResumeMode.RESUME_APP
-        }
 
     fun isActive(state: LockState, nowMs: Long): Boolean =
         state is LockState.Locked && nowMs < state.session.effectiveEndMs

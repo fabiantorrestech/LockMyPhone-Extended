@@ -44,8 +44,14 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import android.nfc.Tag
+import android.util.Log
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
 import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.NfcRules
+import com.fabiantorrestech.lockmyphone_extended.core.lock.QUICK_LOCK_ID
+import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.NfcTagActivity
+import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.TapResult
+import com.fabiantorrestech.lockmyphone_extended.ui.LockChooserDialog
+import android.nfc.NfcAdapter
 import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.NfcTagIo
 import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.TagWriteResult
 import com.fabiantorrestech.lockmyphone_extended.ui.NfcTagEditorScreen
@@ -53,9 +59,28 @@ import com.fabiantorrestech.lockmyphone_extended.ui.TagScanMode
 import com.fabiantorrestech.lockmyphone_extended.core.enforce.LockAccessibilityService
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockState
 import com.fabiantorrestech.lockmyphone_extended.core.lock.StartResult
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
+import com.fabiantorrestech.lockmyphone_extended.ui.formatAlreadyLocked
+import com.fabiantorrestech.lockmyphone_extended.ui.formatClash
+import com.fabiantorrestech.lockmyphone_extended.ui.formatCalendarClash
+import com.fabiantorrestech.lockmyphone_extended.ui.ClashWarnings
+import com.fabiantorrestech.lockmyphone_extended.trigger.AutomationKey
+import com.fabiantorrestech.lockmyphone_extended.trigger.TestLine
+import com.fabiantorrestech.lockmyphone_extended.trigger.TestMark
+import com.fabiantorrestech.lockmyphone_extended.trigger.TestReport
+import com.fabiantorrestech.lockmyphone_extended.ui.TestNowDialog
+import com.fabiantorrestech.lockmyphone_extended.trigger.ConflictRules
+import com.fabiantorrestech.lockmyphone_extended.trigger.TimedCommitment
+import com.fabiantorrestech.lockmyphone_extended.trigger.calendar.CalendarClash
 import com.fabiantorrestech.lockmyphone_extended.core.oem.OemProfiles
 import com.fabiantorrestech.lockmyphone_extended.data.BypassDefaults
+import com.fabiantorrestech.lockmyphone_extended.data.FontChoice
 import com.fabiantorrestech.lockmyphone_extended.data.LockDefaults
+import com.fabiantorrestech.lockmyphone_extended.data.SystemFont
+import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
+import com.fabiantorrestech.lockmyphone_extended.ui.HideStatusBar
+import com.fabiantorrestech.lockmyphone_extended.ui.PickerAppearance
+import com.fabiantorrestech.lockmyphone_extended.ui.rememberFontFamily
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmMatchMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTrigger
@@ -100,6 +125,12 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
 import com.fabiantorrestech.lockmyphone_extended.ui.BeaconModeUiState
 import com.fabiantorrestech.lockmyphone_extended.core.service.BeaconMode
 import com.fabiantorrestech.lockmyphone_extended.ui.CalendarEditorScreen
+import com.fabiantorrestech.lockmyphone_extended.ui.WakeEditorScreen
+import com.fabiantorrestech.lockmyphone_extended.ui.WakeSetupFlow
+import com.fabiantorrestech.lockmyphone_extended.ui.sleepPlaceOwners
+import com.fabiantorrestech.lockmyphone_extended.data.db.WakeTrigger
+import com.fabiantorrestech.lockmyphone_extended.data.db.WifiMatch
+import com.fabiantorrestech.lockmyphone_extended.data.db.WifiNetwork
 import com.fabiantorrestech.lockmyphone_extended.ui.BackupActions
 import com.fabiantorrestech.lockmyphone_extended.ui.BackupUiState
 import com.fabiantorrestech.lockmyphone_extended.ui.RestoreConfirmDialog
@@ -112,12 +143,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
+import com.fabiantorrestech.lockmyphone_extended.data.db.BeaconName
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconRules
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconTiming
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationSlot
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.PlaceSignal
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.ConnectedWifi
 import com.fabiantorrestech.lockmyphone_extended.core.apps.LaunchableApp
 import com.fabiantorrestech.lockmyphone_extended.ui.ReorderActions
+import com.fabiantorrestech.lockmyphone_extended.ui.ToggleActions
+import com.fabiantorrestech.lockmyphone_extended.ui.AutomationEditorExtras
+import com.fabiantorrestech.lockmyphone_extended.ui.WifiTools
 import com.fabiantorrestech.lockmyphone_extended.ui.ScheduleEditorScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.SetupActions
 import com.fabiantorrestech.lockmyphone_extended.ui.SetupChecklist
@@ -127,10 +164,25 @@ import com.fabiantorrestech.lockmyphone_extended.ui.formatDurationLabel
 import com.fabiantorrestech.lockmyphone_extended.ui.theme.LockMyPhoneExtendedTheme
 import kotlinx.coroutines.launch
 
+/**
+ * One Test now dialog: what's tested, the lock a test lock would use (null = Quick lock), the
+ * report once it's ready, and a live line (the NFC tag just held to the phone).
+ */
+private data class TestRun(
+    val name: String,
+    val profileId: Long?,
+    val report: TestReport? = null,
+    val tagLine: TestLine? = null,
+    val id: Long = System.nanoTime(),
+)
+
+/** How long Test now's lock lasts. */
+private const val TEST_LOCK_MS = 30_000L
+
 /** The screens reachable while no lock is active. */
 private enum class Screen {
     HOME, DEVICE, DIAGNOSTICS, PROFILE, PROFILE_APPS, SCHEDULE, QUICK_APPS, ALARM_TRIGGER, ALARM_APP, DEFAULTS, DEFAULT_APPS,
-    LOCATION, CALENDAR, PERMISSIONS, NFC_TAG,
+    LOCATION, CALENDAR, PERMISSIONS, NFC_TAG, WAKE,
 }
 
 // Play Services pulls in an old androidx.fragment, which trips this lint check. This activity is a
@@ -246,8 +298,9 @@ class MainActivity : ComponentActivity() {
         readRequestedTab(intent)
         setContent {
             val themeMode by container.settingsStore.themeMode.collectAsState()
-            LockMyPhoneExtendedTheme(themeMode) {
-                val lockState by container.lockController.state.collectAsState()
+            val lockState by container.lockController.state.collectAsState()
+            // The lock countdown is always OLED black, like the allowed-apps picker.
+            LockMyPhoneExtendedTheme(if (lockState is LockState.Locked) ThemeMode.OLED else themeMode) {
                 val onboardingDone by container.settingsStore.onboardingDone.collectAsState()
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -257,14 +310,24 @@ class MainActivity : ComponentActivity() {
                         locked is LockState.Locked -> {
                             val gateOpen by container.lockController.gateActive.collectAsState()
                             if (gateOpen) NfcReader(::onGateTag)
+                            val pickerStyle by container.settingsStore.pickerStyle.collectAsState()
+                            HideStatusBar(pickerStyle.hideStatusBar)
                             LockedScreen(
                                 session = locked.session,
+                                pickerStyle = pickerStyle,
+                                pickerFont = rememberFontFamily(pickerStyle.font, container.fontLibrary),
                                 passButtonsEnabled = LockAccessibilityService.isRunning,
                                 onOpenAllowedApps = { startActivity(PassActivity.pickerIntent(this)) },
                                 onOpenPhone = { startActivity(PassActivity.dialIntent(this)) },
                                 modifier = contentModifier,
                                 choiceDeadlineMs = container.lockController.choiceDeadlineMs.collectAsState().value,
                                 nfcGate = gateOpen,
+                                refresh = if (container.notifications.isRefreshable(locked.session)) {
+                                    container.placeRefresher.state.collectAsState().value.forLock(locked.session.startedAtMs)
+                                } else {
+                                    null
+                                },
+                                onRefresh = { container.appScope.launch { container.placeRefresher.refresh() } },
                             )
                         }
                         !onboardingDone -> OnboardingScreen(
@@ -276,40 +339,112 @@ class MainActivity : ComponentActivity() {
                         else -> IdleContent(contentModifier)
                     }
                 }
+                tagChooser.value?.let { choose ->
+                    LockChooserDialog(
+                        tagName = choose.tag.name,
+                        choices = choose.choices,
+                        onPick = { choice ->
+                            tagChooser.value = null
+                            container.appScope.launch {
+                                val message = container.nfcTagHandler.startLock(choose.tag, choice.lockId)
+                                Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onDismiss = { tagChooser.value = null },
+                    )
+                }
             }
         }
+        // Android opens this screen instead of the tag handler when it doesn't route a written tag
+        // there; act on the tag anyway. Once only, not again after a rotation.
+        if (savedInstanceState == null) handleTagLaunch(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         readRequestedTab(intent)
+        handleTagLaunch(intent)
+    }
+
+    /** "Start which lock?" after tapping a tag linked to several locks. */
+    private val tagChooser = mutableStateOf<TapResult.ChooseLock?>(null)
+
+    /** A tag that Android delivered to this screen (see onCreate). Like [NfcTagActivity], it can't end a lock. */
+    private fun handleTagLaunch(intent: Intent?) {
+        val tap = NfcTagActivity.tapFrom(intent) ?: return
+        intent?.removeExtra(NfcAdapter.EXTRA_ID)
+        container.appScope.launch { showTapResult(container.nfcTagHandler.onTagTapped(tap.uid, tap.code, readInApp = false)) }
+    }
+
+    private fun showTapResult(result: TapResult) {
+        when (result) {
+            is TapResult.Message -> Toast.makeText(applicationContext, result.text, Toast.LENGTH_SHORT).show()
+            is TapResult.ChooseLock -> tagChooser.value = result
+        }
     }
 
     private fun readRequestedTab(intent: Intent?) {
         if (intent?.getStringExtra(EXTRA_OPEN_TAB) == TAB_AUTOMATIONS) requestedTab.value = HomeTab.AUTOMATIONS
     }
 
+    /**
+     * The idle screens' state: which screen is open and the editors' drafts. Kept outside the
+     * composition, so a lock starting while an editor is open doesn't discard unsaved changes.
+     */
+    private class IdleState {
+        val screen = mutableStateOf(Screen.HOME)
+        val profileDraft = mutableStateOf<LockProfile?>(null)
+        val profileError = mutableStateOf<String?>(null)
+        val scheduleDraft = mutableStateOf<LockSchedule?>(null)
+        val alarmDraft = mutableStateOf<AlarmTrigger?>(null)
+        val locationDraft = mutableStateOf<LocationTrigger?>(null)
+        val fixRequest = mutableStateOf<FixRequest>(FixRequest.Idle)
+        val currentWifi = mutableStateOf<ConnectedWifi?>(null)
+        val slotDrafts = mutableStateOf<List<LocationSlot>>(emptyList())
+        val calendarDraft = mutableStateOf<CalendarTrigger?>(null)
+        val wakeDraft = mutableStateOf<WakeTrigger?>(null)
+
+        /** The Morning lock setup is open over its editor (a new one starts there). */
+        val wakeSetup = mutableStateOf(false)
+        val nfcDraft = mutableStateOf<NfcTag?>(null)
+        val tagScan = mutableStateOf<TagScanMode?>(null)
+        val saveAfterWrite = mutableStateOf(false)
+        val deviceCalendars = mutableStateOf<List<DeviceCalendar>>(emptyList())
+        val nextCalendarMatch = mutableStateOf<CalendarWindow?>(null)
+        val defaultsDraft = mutableStateOf<LockProfile?>(null)
+        val homeTab = mutableStateOf(HomeTab.QUICK_LOCK)
+    }
+
+    private val idle = IdleState()
+
     @Composable
     private fun IdleContent(modifier: Modifier) {
-        var screen by remember { mutableStateOf(Screen.HOME) }
-        // Drafts live here so they survive moving between an editor and the app list.
-        var profileDraft by remember { mutableStateOf<LockProfile?>(null) }
-        var profileError by remember { mutableStateOf<String?>(null) }
-        var scheduleDraft by remember { mutableStateOf<LockSchedule?>(null) }
-        var alarmDraft by remember { mutableStateOf<AlarmTrigger?>(null) }
-        var locationDraft by remember { mutableStateOf<LocationTrigger?>(null) }
-        var fixRequest by remember { mutableStateOf<FixRequest>(FixRequest.Idle) }
-        var currentWifi by remember { mutableStateOf<ConnectedWifi?>(null) }
-        var slotDrafts by remember { mutableStateOf<List<LocationSlot>>(emptyList()) }
-        var calendarDraft by remember { mutableStateOf<CalendarTrigger?>(null) }
-        var nfcDraft by remember { mutableStateOf<NfcTag?>(null) }
-        var tagScan by remember { mutableStateOf<TagScanMode?>(null) }
-        var deviceCalendars by remember { mutableStateOf<List<DeviceCalendar>>(emptyList()) }
-        var nextCalendarMatch by remember { mutableStateOf<CalendarWindow?>(null) }
+        var screen by idle.screen
+        // Drafts live in [idle] so they survive moving between an editor and the app list, and a
+        // lock (e.g. Test now's 30 s test lock) started while an editor is open.
+        var profileDraft by idle.profileDraft
+        var profileError by idle.profileError
+        var scheduleDraft by idle.scheduleDraft
+        var alarmDraft by idle.alarmDraft
+        var locationDraft by idle.locationDraft
+        var fixRequest by idle.fixRequest
+        var currentWifi by idle.currentWifi
+        var slotDrafts by idle.slotDrafts
+        var calendarDraft by idle.calendarDraft
+        var wakeDraft by idle.wakeDraft
+        var wakeSetup by idle.wakeSetup
+        // "I'm in bed now – use here" is finding the Wi-Fi and location.
+        var usingHere by remember { mutableStateOf(false) }
+        var nfcDraft by idle.nfcDraft
+        var tagScan by idle.tagScan
+        // Save on a tag that isn't written yet writes it first, then saves.
+        var saveAfterWrite by idle.saveAfterWrite
+        var deviceCalendars by idle.deviceCalendars
+        var nextCalendarMatch by idle.nextCalendarMatch
         // The Lock defaults page edits a profile-shaped draft (no name, never saved as a profile).
-        var defaultsDraft by remember { mutableStateOf<LockProfile?>(null) }
+        var defaultsDraft by idle.defaultsDraft
         // Kept here (not in HomeScreen) so the tab survives a trip into an editor.
-        var homeTab by remember { mutableStateOf(HomeTab.QUICK_LOCK) }
+        var homeTab by idle.homeTab
 
         val profiles by container.database.profileDao().observeAll().collectAsState(initial = emptyList())
         val schedules by container.database.scheduleDao().observeAll().collectAsState(initial = emptyList())
@@ -320,6 +455,23 @@ class MainActivity : ComponentActivity() {
         val calendarManager = container.calendarTriggerManager
         val calendarTriggers by container.database.calendarTriggerDao().observeAll().collectAsState(initial = emptyList())
         val nfcTags by container.database.nfcTagDao().observeAll().collectAsState(initial = emptyList())
+        val wakeTriggers by container.database.wakeTriggerDao().observeAll().collectAsState(initial = emptyList())
+        val beaconNameRows by container.database.beaconNameDao().observeAll().collectAsState(initial = emptyList())
+        val beaconNames = remember(beaconNameRows) { beaconNameRows.associate { it.key to it.name } }
+        val allSlots by container.database.locationSlotDao().observeAll().collectAsState(initial = emptyList())
+        // Schedules and time-slot places: the commitments whose clashes can be predicted (ADR 0005).
+        val commitments = remember(schedules, locations, allSlots, profiles) { timedCommitments(schedules, locations, allSlots, profiles) }
+        var calendarClashes by remember { mutableStateOf<Map<Long, CalendarClash>>(emptyMap()) }
+        var calendarDraftClash by remember { mutableStateOf<String?>(null) }
+        val clashWarnings = remember(commitments, calendarClashes) {
+            ClashWarnings(
+                schedules = schedules.mapNotNull { schedule ->
+                    clashText(commitments, scheduleKey(schedule.id))?.let { schedule.id to it }
+                }.toMap(),
+                places = locations.mapNotNull { place -> clashText(commitments, placeKey(place.id))?.let { place.id to it } }.toMap(),
+                calendars = calendarClashes.mapValues { formatCalendarClash(this, it.value) },
+            )
+        }
         val nfcGateSeconds by container.settingsStore.nfcGateSeconds.collectAsState()
         val calendarSkipDeclined by container.settingsStore.calendarSkipDeclined.collectAsState()
         val calendarSkipFree by container.settingsStore.calendarSkipFree.collectAsState()
@@ -348,7 +500,6 @@ class MainActivity : ComponentActivity() {
         val quickResumeMode by container.settingsStore.quickResumeMode.collectAsState()
         val quickChoiceSeconds by container.settingsStore.quickChoiceSeconds.collectAsState()
         val quickGrayscale by container.settingsStore.quickGrayscale.collectAsState()
-        val quickNfcUnlock by container.settingsStore.quickNfcUnlock.collectAsState()
         val presetsSec by container.settingsStore.durationPresetsSec.collectAsState()
         val alarmDayStart by container.settingsStore.alarmDayStartMinutes.collectAsState()
         val firstAlarmApps = remember {
@@ -366,7 +517,10 @@ class MainActivity : ComponentActivity() {
             scheduleDraft = null
             alarmDraft = null
             nfcDraft = null
+            wakeDraft = null
+            wakeSetup = false
             tagScan = null
+            saveAfterWrite = false
             container.alarmLearning.cancel()
         }
 
@@ -400,6 +554,62 @@ class MainActivity : ComponentActivity() {
             container.alarmLearning.cancel()
         }
 
+        // The automation whose editor is open can't start its lock until you save, discard or leave the app.
+        val editingKey: AutomationKey? = when (screen) {
+            Screen.SCHEDULE -> scheduleDraft?.id?.takeIf { it != 0L }?.let { AutomationKey(LockKind.SCHEDULE, it) }
+            Screen.ALARM_TRIGGER, Screen.ALARM_APP -> alarmDraft?.id?.takeIf { it != 0L }?.let { AutomationKey(LockKind.ALARM, it) }
+            Screen.LOCATION -> locationDraft?.id?.takeIf { it != 0L }?.let { AutomationKey(LockKind.PLACE, it) }
+            Screen.CALENDAR -> calendarDraft?.id?.takeIf { it != 0L }?.let { AutomationKey(LockKind.CALENDAR, it) }
+            Screen.NFC_TAG -> nfcDraft?.id?.takeIf { it != 0L }?.let { AutomationKey(LockKind.NFC, it) }
+            Screen.WAKE -> wakeDraft?.id?.takeIf { it != 0L }?.let { AutomationKey(LockKind.WAKE, it) }
+            else -> null
+        }
+        DisposableEffect(editingKey) {
+            editingAutomation = editingKey
+            if (editingKey != null && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                container.automationHolds.beginEdit(editingKey)
+            }
+            onDispose {
+                editingAutomation = null
+                container.automationHolds.endEdit()
+            }
+        }
+        val cooldowns by container.automationHolds.cooldowns.collectAsState()
+        val beaconPreset by container.settingsStore.beaconPreset.collectAsState()
+        val beaconCustomTiming by container.settingsStore.beaconCustomTiming.collectAsState()
+        val cooldownOn by container.settingsStore.automationCooldown.collectAsState()
+        val holdNote = when {
+            editingKey != null -> stringResource(if (cooldownOn) R.string.automation_hold_note else R.string.automation_hold_note_no_wait)
+            cooldownOn -> stringResource(R.string.automation_new_note)
+            else -> null
+        }
+        // Test now: the open report (null = closed) and how to run one.
+        var testRun by remember { mutableStateOf<TestRun?>(null) }
+        val tester = container.automationTester
+        val runTest: (name: String, profileId: Long?, build: suspend () -> TestReport) -> Unit = { name, profileId, build ->
+            val run = TestRun(name, profileId)
+            testRun = run
+            scope.launch {
+                val report = build()
+                // Only if this report's dialog is still the open one.
+                if (testRun?.id == run.id) testRun = testRun?.copy(report = report)
+            }
+        }
+
+        testRun?.let { run ->
+            TestNowDialog(
+                name = run.name,
+                report = run.report,
+                extraLine = run.tagLine,
+                canStartLock = setupStatus.value.adminActive,
+                onStartTestLock = {
+                    testRun = null
+                    startTestLock(run.profileId, run.name)
+                },
+                onDismiss = { testRun = null },
+            )
+        }
+
         when (screen) {
             Screen.HOME -> HomeScreen(
                 selectedTab = homeTab,
@@ -419,6 +629,57 @@ class MainActivity : ComponentActivity() {
                     screen = Screen.SCHEDULE
                 },
                 alarmTriggers = alarmTriggers,
+                cooldowns = cooldowns,
+                automationCooldown = cooldownOn,
+                onAutomationCooldownChange = container.settingsStore::setAutomationCooldown,
+                toggleActions = remember {
+                    ToggleActions(
+                        onToggleSchedule = { schedule, on ->
+                            scope.launch {
+                                container.database.scheduleDao().update(schedule.copy(enabled = on))
+                                if (on) onAutomationChanged(AutomationKey(LockKind.SCHEDULE, schedule.id))
+                                container.scheduleScheduler.sync()
+                            }
+                        },
+                        onToggleAlarmTrigger = { trigger, on ->
+                            scope.launch {
+                                container.database.alarmTriggerDao().update(trigger.copy(enabled = on))
+                                if (on) onAutomationChanged(AutomationKey(LockKind.ALARM, trigger.id))
+                                container.alarmHealthChecker.check()
+                            }
+                        },
+                        onToggleLocation = { place, on ->
+                            scope.launch {
+                                container.database.locationTriggerDao().update(place.copy(enabled = on))
+                                if (on) {
+                                    locationManager.onTriggerSaved(place.id)
+                                    onAutomationChanged(AutomationKey(LockKind.PLACE, place.id))
+                                } else {
+                                    locationManager.sync()
+                                }
+                            }
+                        },
+                        onToggleCalendar = { trigger, on ->
+                            scope.launch {
+                                container.database.calendarTriggerDao().update(trigger.copy(enabled = on))
+                                if (on) onAutomationChanged(AutomationKey(LockKind.CALENDAR, trigger.id))
+                                calendarManager.sync()
+                            }
+                        },
+                        onToggleNfcTag = { tag, on ->
+                            scope.launch {
+                                container.database.nfcTagDao().update(tag.copy(enabled = on))
+                                if (on) onAutomationChanged(AutomationKey(LockKind.NFC, tag.id))
+                            }
+                        },
+                        onToggleWake = { trigger, on ->
+                            scope.launch {
+                                container.database.wakeTriggerDao().update(trigger.copy(enabled = on))
+                                if (on) onAutomationChanged(AutomationKey(LockKind.WAKE, trigger.id))
+                            }
+                        },
+                    )
+                },
                 reorderActions = remember {
                     ReorderActions(
                         onReorderProfiles = { list -> scope.launch { container.database.profileDao().reorder(list.map { it.id }) } },
@@ -469,6 +730,7 @@ class MainActivity : ComponentActivity() {
                     screen = Screen.LOCATION
                 },
                 calendarTriggers = calendarTriggers,
+                clashes = clashWarnings,
                 onEditCalendar = { existing ->
                     val store = container.settingsStore
                     calendarDraft = existing ?: CalendarTrigger(
@@ -481,6 +743,16 @@ class MainActivity : ComponentActivity() {
                     screen = Screen.CALENDAR
                 },
                 nfcTags = nfcTags,
+                wakeTriggers = wakeTriggers,
+                onEditWake = { existing ->
+                    wakeDraft = existing ?: WakeTrigger(
+                        name = getString(R.string.wake_default_name),
+                        alarmPackages = firstAlarmApps.map { it.packageName }.toSet(),
+                    )
+                    // A new Morning lock starts with the guided setup.
+                    wakeSetup = existing == null
+                    screen = Screen.WAKE
+                },
                 onEditNfcTag = { existing ->
                     nfcDraft = existing ?: NfcTag(name = "", uid = "")
                     tagScan = null
@@ -529,6 +801,13 @@ class MainActivity : ComponentActivity() {
                     container.settingsStore.setLocationEngine(choice)
                     scope.launch { locationManager.sync() }
                 },
+                beaconPreset = beaconPreset,
+                beaconCustomTiming = beaconCustomTiming,
+                onBeaconTimingChange = { preset, custom ->
+                    container.settingsStore.setBeaconTiming(preset, custom)
+                    // The shared background scan may need a different speed.
+                    scope.launch { locationManager.sync() }
+                },
                 onEditAlarmTrigger = { existing ->
                     // A QRAlarm trigger saved by title (before QRAlarm Pro was recognised) is saved by ID from now on.
                     alarmDraft = existing?.copy(matchMode = AlarmMatcher.effectiveMatchMode(existing)) ?: newAlarmTriggerDraft()
@@ -558,7 +837,6 @@ class MainActivity : ComponentActivity() {
                     grayscale = quickGrayscale,
                     resumeMode = quickResumeMode,
                     choiceSeconds = quickChoiceSeconds,
-                    nfcUnlock = quickNfcUnlock,
                 ),
                 presetsSec = presetsSec,
                 onPresetsChange = container.settingsStore::setDurationPresets,
@@ -568,6 +846,14 @@ class MainActivity : ComponentActivity() {
                 onThemeModeChange = container.settingsStore::setThemeMode,
                 showPickerIcons = showIcons,
                 onShowPickerIconsChange = container.settingsStore::setShowAppIcons,
+                pickerAppearance = PickerAppearance(
+                    style = container.settingsStore.pickerStyle.collectAsState().value,
+                    userFonts = container.fontLibrary.fonts.collectAsState().value,
+                    fontLibrary = container.fontLibrary,
+                    onStyleChange = container.settingsStore::setPickerStyle,
+                    onAddFont = ::addPickerFont,
+                    onRemoveFont = ::removePickerFont,
+                ),
                 startActions = remember {
                     StartLockActions(
                         onEditQuickApps = { screen = Screen.QUICK_APPS },
@@ -584,13 +870,40 @@ class MainActivity : ComponentActivity() {
                 modifier = modifier,
             )
             Screen.NFC_TAG -> nfcDraft?.let { draft ->
+                val saveTag: (NfcTag) -> Unit = { tag ->
+                    scope.launch {
+                        val dao = container.database.nfcTagDao()
+                        try {
+                            val id = if (tag.id == 0L) dao.insertLast(tag) else tag.id.also { dao.update(tag) }
+                            onAutomationChanged(AutomationKey(LockKind.NFC, id))
+                            goHome()
+                        } catch (e: SQLiteConstraintException) {
+                            Toast.makeText(this@MainActivity, R.string.nfc_tag_taken_generic, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
                 // The reader stays on for the whole editor, so a written tag held to the phone
                 // while not scanning is ignored instead of starting its lock.
                 NfcReader { tag ->
+                    testRun?.let { run ->
+                        val same = NfcRules.uidHex(tag.id) == draft.uid
+                        testRun = run.copy(
+                            tagLine = TestLine(
+                                if (same) TestMark.PASS else TestMark.FAIL,
+                                getString(if (same) R.string.test_nfc_same else R.string.test_nfc_other),
+                            ),
+                        )
+                        return@NfcReader
+                    }
                     tagScan?.let { mode ->
                         onEditorTag(tag, mode, draft, nfcTags) { uid, code ->
-                            nfcDraft = nfcDraft?.copy(uid = uid, secret = code)
+                            val updated = draft.copy(uid = uid, secret = code)
+                            nfcDraft = updated
                             tagScan = null
+                            if (saveAfterWrite && mode == TagScanMode.WRITE) {
+                                saveAfterWrite = false
+                                saveTag(updated)
+                            }
                         }
                     }
                 }
@@ -600,30 +913,165 @@ class MainActivity : ComponentActivity() {
                     hasNfc = setupStatus.value.hasNfc,
                     nfcOn = setupStatus.value.nfcOn,
                     scanning = tagScan,
+                    savePending = saveAfterWrite,
                     presetsSec = presetsSec,
                     onOpenNfcSettings = ::openNfcSettings,
-                    onScan = { tagScan = it },
+                    onScan = {
+                        tagScan = it
+                        if (it == null) saveAfterWrite = false
+                    },
                     onDraftChange = { nfcDraft = it },
                     onSave = {
-                        scope.launch {
-                            val dao = container.database.nfcTagDao()
-                            try {
-                                if (draft.id == 0L) dao.insertLast(draft) else dao.update(draft)
-                                goHome()
-                            } catch (e: SQLiteConstraintException) {
-                                Toast.makeText(this@MainActivity, R.string.nfc_tag_taken_generic, Toast.LENGTH_LONG).show()
-                            }
+                        if (draft.written || !setupStatus.value.nfcOn) {
+                            saveTag(draft)
+                        } else {
+                            saveAfterWrite = true
+                            tagScan = TagScanMode.WRITE
                         }
+                    },
+                    onSaveWithoutWriting = {
+                        tagScan = null
+                        saveAfterWrite = false
+                        saveTag(draft)
                     },
                     onDelete = {
                         scope.launch {
                             container.database.nfcTagDao().delete(draft)
+                            container.automationHolds.forget(AutomationKey(LockKind.NFC, draft.id))
                             goHome()
                         }
                     },
                     onBack = goHome,
                     modifier = modifier,
+                    automation = AutomationEditorExtras(holdNote, onTestNow = {
+                        val lockIds = draft.linkedLockIds.filter { id -> id == QUICK_LOCK_ID || profiles.any { it.id.toString() == id } }
+                        runTest(draft.name, lockIds.firstOrNull()?.toLongOrNull()) {
+                            tester.nfc(draft, setupStatus.value.hasNfc, setupStatus.value.nfcOn, lockIds.size)
+                        }
+                    }),
                 )
+            }
+            Screen.WAKE -> wakeDraft?.let { draft ->
+                val saveWake: (Set<Long>) -> Unit = { turnOffAlarmIds ->
+                    scope.launch {
+                        val dao = container.database.wakeTriggerDao()
+                        val id = if (draft.id == 0L) {
+                            dao.insertLast(draft)
+                        } else {
+                            // Keep the day it last locked: it may have changed while the editor was open.
+                            draft.id.also { dao.update(draft.copy(lastFiredDay = dao.getById(it)?.lastFiredDay)) }
+                        }
+                        alarmTriggers.filter { it.id in turnOffAlarmIds }
+                            .forEach { container.database.alarmTriggerDao().update(it.copy(enabled = false)) }
+                        onAutomationChanged(AutomationKey(LockKind.WAKE, id))
+                        goHome()
+                    }
+                }
+                val useHere: () -> Unit = {
+                    scope.launch {
+                        usingHere = true
+                        val wifi = if (locationManager.hasPreciseLocation()) locationManager.connectedWifi() else null
+                        val fix = locationManager.currentFix()
+                        usingHere = false
+                        if (wifi == null && fix == null) {
+                            Toast.makeText(this@MainActivity, getString(R.string.wake_use_here_failed), Toast.LENGTH_LONG).show()
+                            return@launch
+                        }
+                        val name = getString(R.string.wake_use_here_name, wifi?.ssid ?: getString(R.string.wake_use_here_name_fallback))
+                        // A sleep place only answers "am I here?"; it never locks by itself.
+                        val place = LocationTrigger(
+                            name = name,
+                            latitude = fix?.latitude ?: 0.0,
+                            longitude = fix?.longitude ?: 0.0,
+                            mode = LocationMode.CONDITION_ONLY,
+                            signals = setOfNotNull(PlaceSignal.GPS.name.takeIf { fix != null }, PlaceSignal.WIFI.name.takeIf { wifi != null }),
+                            requireAll = false,
+                            wifiNetworks = listOfNotNull(wifi?.let { WifiNetwork(it.ssid, it.bssid, WifiMatch.ROUTER) }),
+                        )
+                        val id = container.database.locationTriggerDao().insertLast(place)
+                        locationManager.onTriggerSaved(id)
+                        wakeDraft = wakeDraft?.let { it.copy(sleepPlaceIds = it.sleepPlaceIds + id) }
+                        if (locationManager.hasPreciseLocation() && !locationManager.hasBackgroundLocation()) {
+                            requestBackgroundLocation()
+                        }
+                    }
+                }
+                WakeEditorScreen(
+                    draft = draft,
+                    profiles = profiles,
+                    places = locations,
+                    alarmApps = firstAlarmApps,
+                    setup = setupStatus.value,
+                    setupActions = setupActions,
+                    presetsSec = presetsSec,
+                    usingHere = usingHere,
+                    onUseHere = useHere,
+                    alarmTriggers = alarmTriggers,
+                    wifiTools = remember {
+                        WifiTools(
+                            history = { locationManager.wifiHistory.entries() },
+                            nearby = { locationManager.nearbyWifi() },
+                            startScan = { locationManager.startWifiScan() },
+                        )
+                    },
+                    currentWifi = remember { locationManager.connectedWifi() },
+                    onAddWifiSleepPlace = { networks ->
+                        scope.launch {
+                            val first = networks.first().label
+                            val name = getString(R.string.wake_use_here_name, if (networks.size > 1) "$first +${networks.size - 1}" else first)
+                            // Wi-Fi only: no coordinates (the column can't hold "none", so 0, 0 unused).
+                            val place = LocationTrigger(
+                                name = name,
+                                latitude = 0.0,
+                                longitude = 0.0,
+                                mode = LocationMode.CONDITION_ONLY,
+                                signals = setOf(PlaceSignal.WIFI.name),
+                                requireAll = false,
+                                wifiNetworks = networks,
+                            )
+                            val id = container.database.locationTriggerDao().insertLast(place)
+                            locationManager.onTriggerSaved(id)
+                            wakeDraft = wakeDraft?.let { it.copy(sleepPlaceIds = it.sleepPlaceIds + id) }
+                        }
+                    },
+                    onDraftChange = { wakeDraft = it },
+                    onSave = { saveWake(emptySet()) },
+                    onDelete = {
+                        scope.launch {
+                            container.database.wakeTriggerDao().delete(draft)
+                            container.automationHolds.forget(AutomationKey(LockKind.WAKE, draft.id))
+                            goHome()
+                        }
+                    },
+                    onBack = goHome,
+                    modifier = modifier,
+                    automation = AutomationEditorExtras(holdNote, onTestNow = {
+                        runTest(draft.name, draft.profileId) {
+                            tester.wake(
+                                draft,
+                                locations,
+                                setupStatus.value.accessibilityEnabled,
+                                draft.alarmPackages.joinToString { container.appCatalog.label(it) },
+                            )
+                        }
+                    }),
+                )
+                if (wakeSetup) {
+                    WakeSetupFlow(
+                        draft = draft,
+                        profiles = profiles,
+                        places = locations,
+                        alarmTriggers = alarmTriggers.filter { it.enabled },
+                        setup = setupStatus.value,
+                        setupActions = setupActions,
+                        presetsSec = presetsSec,
+                        usingHere = usingHere,
+                        onUseHere = useHere,
+                        onDraftChange = { wakeDraft = it },
+                        onDone = { turnOff -> saveWake(turnOff) },
+                        onCancel = goHome,
+                    )
+                }
             }
             Screen.CALENDAR -> calendarDraft?.let { draft ->
                 CalendarEditorScreen(
@@ -632,6 +1080,7 @@ class MainActivity : ComponentActivity() {
                     hasPermission = setupStatus.value.calendarGranted,
                     calendars = deviceCalendars,
                     nextMatch = nextCalendarMatch,
+                    clash = calendarDraftClash,
                     presetsSec = presetsSec,
                     onRequestPermission = { calendarPermissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
                     places = locations,
@@ -639,7 +1088,8 @@ class MainActivity : ComponentActivity() {
                     onSave = {
                         scope.launch {
                             val dao = container.database.calendarTriggerDao()
-                            if (draft.id == 0L) dao.insertLast(draft) else dao.update(draft)
+                            val id = if (draft.id == 0L) dao.insertLast(draft) else draft.id.also { dao.update(draft) }
+                            onAutomationChanged(AutomationKey(LockKind.CALENDAR, id))
                             calendarManager.sync()
                             goHome()
                         }
@@ -647,12 +1097,16 @@ class MainActivity : ComponentActivity() {
                     onDelete = {
                         scope.launch {
                             container.database.calendarTriggerDao().delete(draft)
+                            container.automationHolds.forget(AutomationKey(LockKind.CALENDAR, draft.id))
                             calendarManager.sync()
                             goHome()
                         }
                     },
                     onBack = goHome,
                     modifier = modifier,
+                    automation = AutomationEditorExtras(holdNote, onTestNow = {
+                        runTest(draft.name, draft.profileId) { tester.calendar(draft, locations) }
+                    }),
                 )
             }
             Screen.LOCATION -> locationDraft?.let { draft ->
@@ -668,9 +1122,36 @@ class MainActivity : ComponentActivity() {
                         hasPermission = setupStatus.value.bluetoothScanGranted,
                         bluetoothOn = locationManager.beaconScanner.isBluetoothOn(),
                         onRequestPermission = ::requestBluetoothScan,
-                        discover = { locationManager.beaconScanner.discover(BEACON_DISCOVER_MS) },
+                        discover = { locationManager.beaconScanner.discoverGrouped(BEACON_DISCOVER_MS) },
                         sample = { key -> locationManager.beaconScanner.sample(key, BEACON_CALIBRATE_MS) },
+                        names = beaconNames,
+                        advertisedPower = { key -> locationManager.beaconScanner.advertisedPower(key, BEACON_POWER_SCAN_MS) },
+                        watch = { durationMs, onSightings -> locationManager.beaconScanner.watch(durationMs, onSightings) },
+                        defaultPreset = beaconPreset,
+                        defaultTiming = BeaconTiming.of(beaconPreset, beaconCustomTiming),
+                        status = { place, device -> locationManager.beaconStatus(place, device) },
+                        rename = { key, address, name ->
+                            scope.launch {
+                                // A whole beacon's name lives under its address, so all its formats share it.
+                                val nameKey = address?.let(BeaconRules::deviceKey) ?: key
+                                val dao = container.database.beaconNameDao()
+                                if (name.isBlank()) {
+                                    dao.delete(nameKey)
+                                    dao.delete(key)
+                                } else {
+                                    dao.upsert(BeaconName(nameKey, name))
+                                    container.database.locationTriggerDao().renameBeacon(key, address, name)
+                                }
+                            }
+                        },
                     ),
+                    wifiTools = remember {
+                        WifiTools(
+                            history = { locationManager.wifiHistory.entries() },
+                            nearby = { locationManager.nearbyWifi() },
+                            startScan = { locationManager.startWifiScan() },
+                        )
+                    },
                     pairedDeviceTools = PairedDeviceTools(
                         hasPermission = setupStatus.value.bluetoothConnectGranted,
                         onRequestPermission = ::requestBluetoothConnect,
@@ -682,6 +1163,10 @@ class MainActivity : ComponentActivity() {
                         },
                     ),
                     onSlotsChange = { slotDrafts = it },
+                    slotClash = draft.takeIf { it.enabled && it.mode == LocationMode.TIME_SLOTS }?.let { place ->
+                        val self = TimedCommitment(placeKey(place.id), place.name, slotDrafts.map(LocationSlot::asSchedule))
+                        ConflictRules.firstClash(self, commitments)?.let { formatClash(this, it) }
+                    },
                     onRequestLocationPermission = ::requestLocationPermission,
                     onUseCurrentLocation = {
                         fixRequest = FixRequest.Locating
@@ -707,6 +1192,7 @@ class MainActivity : ComponentActivity() {
                             val slots = if (draft.mode == LocationMode.TIME_SLOTS) slotDrafts else emptyList()
                             container.database.locationSlotDao().replaceForLocation(id, slots)
                             locationManager.onTriggerSaved(id)
+                            onAutomationChanged(AutomationKey(LockKind.PLACE, id))
                             // Watching places in the background needs "Allow all the time".
                             if (locationManager.hasPreciseLocation() && !locationManager.hasBackgroundLocation()) {
                                 requestBackgroundLocation()
@@ -717,12 +1203,17 @@ class MainActivity : ComponentActivity() {
                     onDelete = {
                         scope.launch {
                             container.database.locationTriggerDao().delete(draft)
+                            container.automationHolds.forget(AutomationKey(LockKind.PLACE, draft.id))
                             locationManager.sync()
                             goHome()
                         }
                     },
                     onBack = goHome,
                     modifier = modifier,
+                    automation = AutomationEditorExtras(holdNote, onTestNow = {
+                        runTest(draft.name, draft.profileId) { tester.place(draft, slotDrafts) }
+                    }),
+                    sleepPlaceOf = sleepPlaceOwners(wakeTriggers)[draft.id].orEmpty(),
                 )
             }
             Screen.ALARM_TRIGGER -> alarmDraft?.let { draft ->
@@ -757,6 +1248,7 @@ class MainActivity : ComponentActivity() {
                         scope.launch {
                             val dao = container.database.alarmTriggerDao()
                             val id = if (draft.id == 0L) dao.insertLast(draft) else draft.id.also { dao.update(draft) }
+                            onAutomationChanged(AutomationKey(LockKind.ALARM, id))
                             // A saved (or re-learned) trigger starts with a clean bill of health.
                             container.alarmTriggerHealth.onTriggerSaved(id)
                             container.alarmHealthChecker.check()
@@ -766,11 +1258,15 @@ class MainActivity : ComponentActivity() {
                     onDelete = {
                         scope.launch {
                             container.database.alarmTriggerDao().delete(draft)
+                            container.automationHolds.forget(AutomationKey(LockKind.ALARM, draft.id))
                             goHome()
                         }
                     },
                     onBack = goHome,
                     modifier = modifier,
+                    automation = AutomationEditorExtras(holdNote, onTestNow = {
+                        runTest(draft.name, draft.profileId) { tester.alarm(draft, setupStatus.value.notificationAccessGranted) }
+                    }),
                 )
             }
             Screen.ALARM_APP -> alarmDraft?.let { draft ->
@@ -886,10 +1382,15 @@ class MainActivity : ComponentActivity() {
                     profiles = profiles,
                     places = locations,
                     onDraftChange = { scheduleDraft = it },
+                    clash = draft.takeIf { it.enabled }?.let { schedule ->
+                        ConflictRules.firstClash(TimedCommitment(scheduleKey(schedule.id), "", listOf(schedule)), commitments)
+                            ?.let { formatClash(this, it) }
+                    },
                     onSave = {
                         scope.launch {
                             val dao = container.database.scheduleDao()
-                            if (draft.id == 0L) dao.insertLast(draft) else dao.update(draft)
+                            val id = if (draft.id == 0L) dao.insertLast(draft) else draft.id.also { dao.update(draft) }
+                            onAutomationChanged(AutomationKey(LockKind.SCHEDULE, id))
                             container.scheduleScheduler.sync()
                             goHome()
                         }
@@ -897,12 +1398,17 @@ class MainActivity : ComponentActivity() {
                     onDelete = {
                         scope.launch {
                             container.database.scheduleDao().delete(draft)
+                            container.automationHolds.forget(AutomationKey(LockKind.SCHEDULE, draft.id))
                             container.scheduleScheduler.sync()
                             goHome()
                         }
                     },
                     onBack = goHome,
                     modifier = modifier,
+                    automation = AutomationEditorExtras(holdNote, onTestNow = {
+                        val profileName = profiles.firstOrNull { it.id == draft.profileId }?.name.orEmpty()
+                        runTest(profileName, draft.profileId) { tester.schedule(draft, locations) }
+                    }),
                 )
             }
             Screen.DEVICE -> {
@@ -966,6 +1472,11 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        // Calendar clashes need the phone's events, so they're read in the background.
+        LaunchedEffect(calendarTriggers, commitments, setupStatus.value.calendarGranted) {
+            calendarClashes = calendarManager.clashes(calendarTriggers.filter { it.enabled }, calendarTriggers, commitments)
+        }
+
         // The calendar row only matters once a calendar trigger exists.
         LaunchedEffect(calendarTriggers) {
             val exist = calendarTriggers.isNotEmpty()
@@ -979,6 +1490,12 @@ class MainActivity : ComponentActivity() {
             val draft = calendarDraft ?: return@LaunchedEffect
             delay(CALENDAR_PREVIEW_DELAY_MS)
             nextCalendarMatch = calendarManager.nextMatch(draft)
+            calendarDraftClash = if (draft.enabled) {
+                calendarManager.clashes(listOf(draft), calendarTriggers, commitments)[draft.id]
+                    ?.let { formatCalendarClash(this@MainActivity, it) }
+            } else {
+                null
+            }
             if (deviceCalendars.isEmpty()) deviceCalendars = withContext(Dispatchers.IO) { calendarManager.reader.calendars() }
         }
 
@@ -1030,11 +1547,37 @@ class MainActivity : ComponentActivity() {
                 Screen.LOCATION -> locationDraft == null
                 Screen.CALENDAR -> calendarDraft == null
                 Screen.NFC_TAG -> nfcDraft == null
+                Screen.WAKE -> wakeDraft == null
                 else -> false
             }
             if (missingDraft) screen = Screen.HOME
         }
     }
+
+    /** Enabled schedules and "during time slots" places, as commitments for clash warnings. */
+    private fun timedCommitments(
+        schedules: List<LockSchedule>,
+        places: List<LocationTrigger>,
+        slots: List<LocationSlot>,
+        profiles: List<LockProfile>,
+    ): List<TimedCommitment> {
+        val profileNames = profiles.associate { it.id to it.name }
+        val scheduleCommitments = schedules.filter { it.enabled }
+            .map { TimedCommitment(scheduleKey(it.id), profileNames[it.profileId].orEmpty(), listOf(it)) }
+        val placeCommitments = places.filter { it.enabled && it.mode == LocationMode.TIME_SLOTS }
+            .map { place -> TimedCommitment(placeKey(place.id), place.name, slots.filter { it.locationId == place.id }.map(LocationSlot::asSchedule)) }
+        return scheduleCommitments + placeCommitments
+    }
+
+    /** The warning for the commitment with [key], if it clashes with another. */
+    private fun clashText(commitments: List<TimedCommitment>, key: String): String? {
+        val self = commitments.firstOrNull { it.key == key } ?: return null
+        return ConflictRules.firstClash(self, commitments)?.let { formatClash(this, it) }
+    }
+
+    private fun scheduleKey(id: Long) = "schedule:$id"
+
+    private fun placeKey(id: Long) = "place:$id"
 
     /** A new profile starts from the Lock defaults (Settings → Lock defaults). */
     private fun newProfileDraft() = container.settingsStore.lockDefaults.value.toProfileDraft()
@@ -1120,6 +1663,30 @@ class MainActivity : ComponentActivity() {
         NfcTagIo.setReader(this, null)
     }
 
+    /**
+     * [key] was saved or switched on: the editor's hold ends and its one-minute wait starts (or,
+     * with the wait off in Settings, it catches up now). Call before re-syncing its manager, so
+     * nothing starts in between.
+     */
+    private suspend fun onAutomationChanged(key: AutomationKey) {
+        container.automationHolds.endEdit(catchUp = false)
+        container.automationHolds.startCooldown(key)
+    }
+
+    /** The automation whose editor is open. It's held while this screen is in front ([AutomationHolds]). */
+    private var editingAutomation: AutomationKey? = null
+
+    override fun onStart() {
+        super.onStart()
+        editingAutomation?.let(container.automationHolds::beginEdit)
+    }
+
+    /** Leaving the app releases the editor's hold: an automation only waits while you're looking at it. */
+    override fun onStop() {
+        container.automationHolds.endEdit()
+        super.onStop()
+    }
+
     /** The screen currently reading NFC tags (the gate, or the tag editor), or null. */
     private var nfcReaderCallback: ((Tag) -> Unit)? = null
 
@@ -1146,10 +1713,7 @@ class MainActivity : ComponentActivity() {
     private fun onGateTag(tag: Tag) {
         val uid = NfcRules.uidHex(tag.id)
         val code = NfcTagIo.readCode(tag)
-        container.appScope.launch {
-            val message = container.nfcTagHandler.onTagTapped(uid, code, readInApp = true)
-            Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
-        }
+        container.appScope.launch { showTapResult(container.nfcTagHandler.onTagTapped(uid, code, readInApp = true)) }
     }
 
     /**
@@ -1167,6 +1731,7 @@ class MainActivity : ComponentActivity() {
         onRegistered: (uid: String, code: String?) -> Unit,
     ) {
         val uid = NfcRules.uidHex(tag.id)
+        Log.i(TAG, "Tag $uid in the editor: ${NfcTagIo.describe(tag)}")
         val owner = allTags.firstOrNull { it.uid == uid && it.id != draft.id }
         when {
             owner != null -> Toast.makeText(this, getString(R.string.nfc_tag_taken, owner.name), Toast.LENGTH_LONG).show()
@@ -1175,7 +1740,7 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this, R.string.nfc_write_other_tag, Toast.LENGTH_LONG).show()
             else -> lifecycleScope.launch {
                 val code = draft.secret?.takeIf { draft.uid == uid } ?: NfcTagIo.readCode(tag) ?: NfcTagIo.newCode()
-                val result = withContext(Dispatchers.IO) { NfcTagIo.write(tag, packageName, code) }
+                val result = withContext(Dispatchers.IO) { NfcTagIo.write(tag, code) }
                 Toast.makeText(this@MainActivity, writeResultText(result), Toast.LENGTH_LONG).show()
                 if (result == TagWriteResult.WRITTEN) onRegistered(uid, code)
             }
@@ -1494,8 +2059,26 @@ class MainActivity : ComponentActivity() {
             profile = profile,
             durationMs = durationMs,
             label = getString(R.string.manual_lock_label, "${profile.name}, ${formatDurationLabel(durationMs)}"),
+            kind = LockKind.MANUAL,
         )
         showStartResult(result)
+    }
+
+    /**
+     * Test now's 30 s lock: the automation's lock ([profileId], or Quick lock when null), started
+     * like a manual one, so any real automation may replace it. An open editor stays as it was.
+     */
+    private fun startTestLock(profileId: Long?, name: String) {
+        lifecycleScope.launch {
+            val label = getString(R.string.test_lock_label, name)
+            val result = if (profileId == null) {
+                container.profileLockStarter.startQuick(TEST_LOCK_MS, label, LockKind.MANUAL)
+            } else {
+                val profile = container.database.profileDao().getById(profileId) ?: return@launch
+                container.profileLockStarter.start(profile, TEST_LOCK_MS, label, LockKind.MANUAL)
+            }
+            showStartResult(result)
+        }
     }
 
     /** Saves every Quick lock setting as it's changed, so it's prefilled next time. */
@@ -1509,8 +2092,30 @@ class MainActivity : ComponentActivity() {
         store.setQuickDndLevel(settings.dndLevel)
         store.setQuickGrayscale(settings.grayscale)
         store.setQuickResume(settings.resumeMode, settings.choiceSeconds)
-        store.setQuickNfcUnlock(settings.nfcUnlock)
         if (turnedOnModes) askForDndAccessIfNeeded()
+    }
+
+    /** Settings → Add font…: copies the file in and selects it, or says it isn't a font. */
+    private fun addPickerFont(uri: Uri) {
+        lifecycleScope.launch {
+            val fileName = container.fontLibrary.add(uri)
+            if (fileName == null) {
+                Toast.makeText(this@MainActivity, R.string.picker_font_invalid, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val store = container.settingsStore
+            store.setPickerStyle(store.pickerStyle.value.copy(font = FontChoice.UserFile(fileName)))
+            Toast.makeText(this@MainActivity, R.string.picker_font_added, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Removes an added font; if it was in use, the picker goes back to the default font. */
+    private fun removePickerFont(fileName: String) {
+        container.fontLibrary.remove(fileName)
+        val store = container.settingsStore
+        if (store.pickerStyle.value.font == FontChoice.UserFile(fileName)) {
+            store.setPickerStyle(store.pickerStyle.value.copy(font = FontChoice.System(SystemFont.DEFAULT)))
+        }
     }
 
     /** Starts a Quick lock with its saved settings. */
@@ -1519,20 +2124,27 @@ class MainActivity : ComponentActivity() {
         val result = container.profileLockStarter.startQuick(
             durationMs = durationMs,
             label = getString(R.string.manual_lock_label, "${getString(R.string.quick_lock)}, ${formatDurationLabel(durationMs)}"),
+            kind = LockKind.MANUAL,
         )
         showStartResult(result)
     }
 
     private fun showStartResult(result: StartResult) {
-        if (result == StartResult.ADMIN_NOT_ACTIVE) {
-            Toast.makeText(this, R.string.start_needs_admin, Toast.LENGTH_LONG).show()
+        when (result) {
+            StartResult.AdminNotActive -> Toast.makeText(this, R.string.start_needs_admin, Toast.LENGTH_LONG).show()
+            is StartResult.Refused -> Toast.makeText(this, formatAlreadyLocked(this, result.running), Toast.LENGTH_LONG).show()
+            // Manual locks have no owner, so they're never held.
+            StartResult.Started, is StartResult.Replaced, is StartResult.Held -> Unit
         }
     }
 
     companion object {
         const val EXTRA_OPEN_TAB = "open_tab"
+        private const val TAG = "MainActivity"
         private const val CALENDAR_PREVIEW_DELAY_MS = 400L
         private const val BEACON_DISCOVER_MS = 15_000L
+        /** Long enough to catch a beacon's advertised 1 m signal a few times. */
+        private const val BEACON_POWER_SCAN_MS = 8_000L
 
         /** Lets the "closing" toast show before the app ends to apply a revoked permission. */
         private const val REVOKE_EXIT_DELAY_MS = 800L

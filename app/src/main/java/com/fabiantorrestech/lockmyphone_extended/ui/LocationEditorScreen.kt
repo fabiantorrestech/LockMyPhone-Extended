@@ -13,15 +13,22 @@ import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.BluetoothSearching
-import androidx.compose.material.icons.filled.Computer
-import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.Smartphone
-import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Speed
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconPreset
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconTiming
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.beaconTiming
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.PairedDevices
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconSpot
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.RangeRules
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.Walls
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconGroup
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconStatus
+import kotlin.math.roundToInt
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.knownOneMeterDbm
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Schedule
@@ -30,7 +37,6 @@ import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -58,7 +64,6 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconSighting
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.ConnectedWifi
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationRules
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.PairedDevice
-import com.fabiantorrestech.lockmyphone_extended.trigger.location.PairedDeviceKind
 import java.util.Locale
 
 /** The state of "Use my current location". */
@@ -74,11 +79,28 @@ class BeaconTools(
     val hasPermission: Boolean,
     val bluetoothOn: Boolean,
     val onRequestPermission: () -> Unit,
-    /** A ~15 s scan listing nearby beacons, strongest first. */
-    val discover: suspend () -> List<BeaconSighting>,
+    /** A ~15 s scan listing nearby beacons, one per physical beacon, strongest first. */
+    val discover: suspend () -> List<BeaconGroup>,
     /** ~20 s of readings of one beacon, for calibration. */
     val sample: suspend (key: String) -> List<Int>,
-)
+    /** Your nicknames for beacons, by key (`device:<address>` for a whole beacon). */
+    val names: Map<String, String> = emptyMap(),
+    /** Saves a nickname for a beacon (all its formats when [address] is known); blank removes it. */
+    val rename: (key: String, address: String?, name: String) -> Unit = { _, _, _ -> },
+    /** An ~8 s scan for the 1 m signal a beacon says it has (iBeacon, Eddystone, AltBeacon), or null. */
+    val advertisedPower: suspend (key: String) -> Int? = { null },
+    /** Every sighting for [durationMs], for the live signal meter. */
+    val watch: suspend (durationMs: Long, onSightings: (List<BeaconSighting>) -> Unit) -> Unit = { _, _ -> },
+    /** Settings → Beacons: how quickly places react unless they have their own. */
+    val defaultPreset: BeaconPreset = BeaconPreset.BALANCED,
+    val defaultTiming: BeaconTiming = BeaconTiming.BALANCED,
+    /** The background check's view of a place's beacon (device = its nearby paired device), for the too-strict warning. */
+    val status: (place: LocationTrigger, device: Boolean) -> BeaconStatus? = { _, _ -> null },
+) {
+    /** A beacon's nickname: the whole beacon's (by address) first, else the format key's. */
+    fun nameOf(key: String?, address: String?): String? =
+        address?.let { names[BeaconRules.deviceKey(it)] } ?: key?.let { names[it] }
+}
 
 /** What the place editor needs for paired Bluetooth devices. */
 class PairedDeviceTools(
@@ -110,8 +132,10 @@ fun LocationEditorScreen(
     currentWifi: ConnectedWifi?,
     slots: List<LocationSlot>,
     beaconTools: BeaconTools,
+    wifiTools: WifiTools,
     pairedDeviceTools: PairedDeviceTools,
     onSlotsChange: (List<LocationSlot>) -> Unit,
+    slotClash: String?,
     onRequestLocationPermission: () -> Unit,
     onUseCurrentLocation: () -> Unit,
     onPreviewInMaps: () -> Unit,
@@ -120,8 +144,20 @@ fun LocationEditorScreen(
     onDelete: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The hold note and "Test now"; null for a new automation's editor or none at all. */
+    automation: AutomationEditorExtras? = null,
+    /** The Morning locks using this place as a sleep place (empty = none). */
+    sleepPlaceOf: List<String> = emptyList(),
 ) {
     var editing by remember { mutableStateOf<LocationDialog?>(null) }
+    // Made by Morning lock (condition only): say so, so it isn't deleted by mistake.
+    val madeByMorningLock = sleepPlaceOf.isNotEmpty() && draft.mode == LocationMode.CONDITION_ONLY
+    // The Wi-Fi network picker for the place's Wi-Fi signal is open.
+    var pickingWifi by remember { mutableStateOf(false) }
+    // The guided setup that is open (beacon or nearby device), if any.
+    var settingUp by remember { mutableStateOf<SetupKind?>(null) }
+    // A measuring dialog opened from the Range screen: for which signal, and how.
+    var measuring by remember { mutableStateOf<Pair<SetupKind, AreaMethod>?>(null) }
     // The slot being edited in its dialog: an index into [slots], or -1 for a new one.
     var editingSlot by remember { mutableStateOf<Int?>(null) }
     val isNew = draft.id == 0L
@@ -129,6 +165,9 @@ fun LocationEditorScreen(
     val signals = draft.signalSet
     val hasPlace = !draft.latitude.isNaN() && !draft.longitude.isNaN()
     val targetProfile = profiles.firstOrNull { it.id == draft.profileId }
+    // How quickly this place's beacon (or nearby device) reacts: its own preset, or the default.
+    val placePreset = BeaconPreset.entries.firstOrNull { it.name == draft.beaconPreset }
+    val placeTiming = draft.beaconTiming(beaconTools.defaultTiming)
 
     val whenComplete = when (draft.mode) {
         LocationMode.TIME_SLOTS -> slots.isNotEmpty() && slots.all { it.isValid }
@@ -137,13 +176,18 @@ fun LocationEditorScreen(
     }
     val signalsComplete = signals.isNotEmpty() &&
         (PlaceSignal.GPS !in signals || hasPlace) &&
-        (PlaceSignal.WIFI !in signals || draft.wifiBssid != null) &&
+        (PlaceSignal.WIFI !in signals || draft.wifiNetworks.isNotEmpty()) &&
         (PlaceSignal.BEACON !in signals || draft.beaconKey != null) &&
         (PlaceSignal.BT_DEVICE !in signals || draft.btAddress != null)
 
     fun toggleSignal(signal: PlaceSignal) {
-        val names = if (signal in signals) draft.signals - signal.name else draft.signals + signal.name
+        val turningOn = signal !in signals
+        val names = if (turningOn) draft.signals + signal.name else draft.signals - signal.name
         onDraftChange(draft.copy(signals = names))
+        // A beacon that isn't set up yet: go straight to the guided setup (spec §2).
+        if (turningOn && signal == PlaceSignal.BEACON && draft.beaconKey == null && beaconTools.hasPermission && beaconTools.bluetoothOn) {
+            settingUp = SetupKind.BEACON
+        }
     }
 
     EditorScaffold(
@@ -153,7 +197,16 @@ fun LocationEditorScreen(
         onSave = onSave,
         onDelete = if (isNew) null else ({ editing = LocationDialog.DELETE }),
         modifier = modifier,
+        automation = automation,
     ) {
+        if (sleepPlaceOf.isNotEmpty()) {
+            WarningNote(
+                stringResource(
+                    if (madeByMorningLock) R.string.place_sleep_banner else R.string.place_sleep_banner_shared,
+                    sleepPlaceOf.joinToString(),
+                )
+            )
+        }
         if (!hasLocationPermission && (signals - PlaceSignal.CHARGER).isNotEmpty()) {
             Text(stringResource(R.string.location_needs_permission), style = MaterialTheme.typography.bodyMedium)
             Button(onClick = onRequestLocationPermission, modifier = Modifier.fillMaxWidth()) {
@@ -257,22 +310,11 @@ fun LocationEditorScreen(
 
         if (PlaceSignal.WIFI in signals) {
             SettingsSection(stringResource(R.string.section_wifi)) {
-                SettingsRow(
-                    icon = Icons.Filled.Wifi,
-                    title = stringResource(R.string.location_wifi_use_current),
-                    summary = when {
-                        draft.wifiBssid != null -> stringResource(
-                            R.string.location_wifi_required,
-                            draft.wifiSsid ?: stringResource(R.string.location_wifi_unnamed),
-                            draft.wifiBssid,
-                        )
-                        currentWifi != null -> stringResource(R.string.location_wifi_offer, currentWifi.ssid ?: currentWifi.bssid)
-                        else -> stringResource(R.string.location_wifi_none)
-                    },
-                    onClick = {
-                        currentWifi?.let { onDraftChange(draft.copy(wifiBssid = it.bssid, wifiSsid = it.ssid)) }
-                    },
-                    enabled = currentWifi != null,
+                // Connected to any one of these = here.
+                WifiNetworkList(
+                    networks = draft.wifiNetworks,
+                    onChange = { onDraftChange(draft.copy(wifiNetworks = it)) },
+                    onAdd = { pickingWifi = true },
                 )
                 Text(
                     stringResource(R.string.location_wifi_hint),
@@ -284,6 +326,7 @@ fun LocationEditorScreen(
         }
 
         if (PlaceSignal.BEACON in signals) {
+            val canScan = beaconTools.hasPermission && beaconTools.bluetoothOn
             SettingsSection(stringResource(R.string.section_beacon)) {
                 if (!beaconTools.hasPermission) {
                     Column(SectionContentPadding) {
@@ -295,28 +338,52 @@ fun LocationEditorScreen(
                 }
                 SettingsRow(
                     icon = Icons.Filled.BluetoothSearching,
-                    title = stringResource(R.string.beacon_pick),
-                    summary = draft.beaconName?.let { "$it · ${draft.beaconKey}" } ?: stringResource(R.string.beacon_none),
-                    onClick = { editing = LocationDialog.BEACON_PICK },
-                    enabled = beaconTools.hasPermission && beaconTools.bluetoothOn,
+                    title = stringResource(R.string.beacon_row),
+                    summary = draft.beaconKey?.let { key ->
+                        listOf(
+                            beaconTools.nameOf(key, draft.beaconAddress) ?: draft.beaconName ?: "?",
+                            stringResource(matchLabel(key)),
+                            "ID ${BeaconRules.shortId(draft.beaconAddress?.let(BeaconRules::deviceKey) ?: key)}",
+                        ).joinToString(" · ")
+                    } ?: stringResource(R.string.beacon_not_set_up),
+                    onClick = { settingUp = SetupKind.BEACON },
+                    enabled = canScan,
                 )
-                SectionDivider()
-                SettingsRow(
-                    icon = Icons.Filled.NetworkCheck,
-                    title = stringResource(R.string.beacon_calibrate),
-                    summary = stringResource(R.string.beacon_calibrate_hint),
-                    onClick = { editing = LocationDialog.BEACON_CALIBRATE },
-                    enabled = draft.beaconKey != null && beaconTools.hasPermission && beaconTools.bluetoothOn,
-                )
-                SectionDivider()
-                SettingsRow(
-                    icon = Icons.Filled.SignalCellularAlt,
-                    title = stringResource(R.string.beacon_threshold),
-                    summary = stringResource(R.string.beacon_threshold_value, draft.beaconRssiThreshold),
-                    onClick = { editing = LocationDialog.BEACON_THRESHOLD },
-                )
+                if (draft.beaconKey != null) {
+                    SectionDivider()
+                    SettingsRow(
+                        icon = Icons.Filled.SignalCellularAlt,
+                        title = stringResource(R.string.range_row),
+                        summary = rangeSummary(draft.beaconRssiThreshold, draft.knownOneMeterDbm),
+                        onClick = { editing = LocationDialog.RANGE_BEACON },
+                    )
+                    SectionDivider()
+                    SettingsRow(
+                        icon = Icons.Filled.Speed,
+                        title = stringResource(R.string.beacon_timing_title),
+                        summary = beaconTimingLabel(LocalContext.current, placePreset, beaconTools.defaultPreset) +
+                            "\n" + timingSummary(LocalContext.current, placeTiming),
+                        onClick = { editing = LocationDialog.TIMING },
+                    )
+                    SectionDivider()
+                    SettingsRow(
+                        icon = Icons.Filled.GraphicEq,
+                        title = stringResource(R.string.live_row),
+                        summary = stringResource(R.string.live_row_hint),
+                        onClick = { editing = LocationDialog.BEACON_LIVE },
+                        enabled = canScan,
+                    )
+                    val status = remember(draft.id, draft.beaconKey) { beaconTools.status(draft, false) }
+                    if (BeaconRules.rangeTooStrict(status, draft.beaconRssiThreshold, System.currentTimeMillis())) {
+                        TooStrictWarning(
+                            averageDbm = status?.averageDbm?.roundToInt() ?: 0,
+                            thresholdDbm = draft.beaconRssiThreshold,
+                            onMeasureAgain = { editing = LocationDialog.RANGE_BEACON },
+                        )
+                    }
+                }
                 Text(
-                    stringResource(R.string.beacon_hint),
+                    stringResource(R.string.beacon_hint, formatWait(LocalContext.current, placeTiming.arriveMs), formatWait(LocalContext.current, placeTiming.leaveMs)),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = SectionContentPadding,
@@ -337,9 +404,12 @@ fun LocationEditorScreen(
                 }
                 SettingsRow(
                     icon = Icons.Filled.BluetoothConnected,
-                    title = stringResource(R.string.bt_device_pick),
-                    summary = draft.btName?.let { "$it · ${draft.btAddress}" } ?: stringResource(R.string.bt_device_none),
-                    onClick = { editing = LocationDialog.DEVICE_PICK },
+                    title = stringResource(R.string.device_row),
+                    summary = draft.btAddress?.let { address ->
+                        beaconTools.nameOf(BeaconRules.deviceKey(address), PairedDevices.normalize(address)) ?: draft.btName
+                    } ?: stringResource(R.string.bt_device_none),
+                    // Detected nearby: the guided setup sets its range too. Connected: just pick it.
+                    onClick = { if (nearby) settingUp = SetupKind.DEVICE else editing = LocationDialog.DEVICE_PICK },
                     enabled = pairedDeviceTools.hasPermission,
                 )
                 SectionDivider()
@@ -362,24 +432,50 @@ fun LocationEditorScreen(
                             TextButton(onClick = beaconTools.onRequestPermission) { Text(stringResource(R.string.beacon_allow)) }
                         }
                     }
-                    SectionDivider()
-                    SettingsRow(
-                        icon = Icons.Filled.NetworkCheck,
-                        title = stringResource(R.string.beacon_calibrate),
-                        summary = stringResource(R.string.beacon_calibrate_hint),
-                        onClick = { editing = LocationDialog.DEVICE_CALIBRATE },
-                        enabled = draft.btAddress != null && beaconTools.hasPermission && beaconTools.bluetoothOn,
-                    )
-                    SectionDivider()
-                    SettingsRow(
-                        icon = Icons.Filled.SignalCellularAlt,
-                        title = stringResource(R.string.beacon_threshold),
-                        summary = stringResource(R.string.beacon_threshold_value, draft.btRssiThreshold),
-                        onClick = { editing = LocationDialog.DEVICE_THRESHOLD },
-                    )
+                    if (draft.btAddress != null) {
+                        val canScan = beaconTools.hasPermission && beaconTools.bluetoothOn
+                        SectionDivider()
+                        SettingsRow(
+                            icon = Icons.Filled.SignalCellularAlt,
+                            title = stringResource(R.string.range_row),
+                            summary = rangeSummary(draft.btRssiThreshold, null),
+                            onClick = { editing = LocationDialog.RANGE_DEVICE },
+                        )
+                        // Without a beacon signal, the nearby device is the only one using this timing.
+                        if (PlaceSignal.BEACON !in signals) {
+                            SectionDivider()
+                            SettingsRow(
+                                icon = Icons.Filled.Speed,
+                                title = stringResource(R.string.beacon_timing_title),
+                                summary = beaconTimingLabel(LocalContext.current, placePreset, beaconTools.defaultPreset) +
+                                    "\n" + timingSummary(LocalContext.current, placeTiming),
+                                onClick = { editing = LocationDialog.TIMING },
+                            )
+                        }
+                        SectionDivider()
+                        SettingsRow(
+                            icon = Icons.Filled.GraphicEq,
+                            title = stringResource(R.string.live_row),
+                            summary = stringResource(R.string.live_row_hint),
+                            onClick = { editing = LocationDialog.DEVICE_LIVE },
+                            enabled = canScan,
+                        )
+                        val status = remember(draft.id, draft.btAddress) { beaconTools.status(draft, true) }
+                        if (BeaconRules.rangeTooStrict(status, draft.btRssiThreshold, System.currentTimeMillis())) {
+                            TooStrictWarning(
+                                averageDbm = status?.averageDbm?.roundToInt() ?: 0,
+                                thresholdDbm = draft.btRssiThreshold,
+                                onMeasureAgain = { editing = LocationDialog.RANGE_DEVICE },
+                            )
+                        }
+                    }
                 }
                 Text(
-                    stringResource(if (nearby) R.string.bt_nearby_hint else R.string.bt_connected_hint),
+                    if (nearby) {
+                        stringResource(R.string.bt_nearby_hint, formatWait(LocalContext.current, placeTiming.arriveMs), formatWait(LocalContext.current, placeTiming.leaveMs))
+                    } else {
+                        stringResource(R.string.bt_connected_hint)
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = SectionContentPadding,
@@ -418,6 +514,7 @@ fun LocationEditorScreen(
         when (draft.mode) {
             LocationMode.TIME_SLOTS -> {
                 SettingsSection(stringResource(R.string.section_time_slots)) {
+                    slotClash?.let { WarningNote(it) }
                     if (slots.isEmpty()) {
                         Text(stringResource(R.string.slots_empty), style = MaterialTheme.typography.bodySmall, modifier = SectionContentPadding)
                     }
@@ -511,24 +608,125 @@ fun LocationEditorScreen(
             },
             onDismiss = { editing = null },
         )
-        LocationDialog.BEACON_PICK -> BeaconPickerDialog(
-            discover = beaconTools.discover,
-            onPick = { sighting ->
-                onDraftChange(draft.copy(beaconKey = sighting.key, beaconName = sighting.label))
-                editing = LocationDialog.BEACON_CALIBRATE
+        LocationDialog.RANGE_BEACON -> BeaconRangeDialog(
+            thresholdDbm = draft.beaconRssiThreshold,
+            oneMeterDbm = draft.knownOneMeterDbm,
+            canMeasure = draft.beaconKey != null && beaconTools.hasPermission && beaconTools.bluetoothOn,
+            onMeasure = { method ->
+                measuring = SetupKind.BEACON to method
+                editing = null
+            },
+            onRoomSize = { editing = LocationDialog.BEACON_RANGE },
+            onTypeValue = { editing = LocationDialog.BEACON_THRESHOLD },
+            onGuide = { editing = LocationDialog.NEAR_INFO },
+            onDismiss = { editing = null },
+        )
+        LocationDialog.RANGE_DEVICE -> BeaconRangeDialog(
+            thresholdDbm = draft.btRssiThreshold,
+            oneMeterDbm = null,
+            canMeasure = draft.btAddress != null && beaconTools.hasPermission && beaconTools.bluetoothOn,
+            onMeasure = { method ->
+                measuring = SetupKind.DEVICE to method
+                editing = null
+            },
+            onRoomSize = { editing = LocationDialog.DEVICE_RANGE },
+            onTypeValue = { editing = LocationDialog.DEVICE_THRESHOLD },
+            onGuide = { editing = LocationDialog.NEAR_INFO },
+            onDismiss = { editing = null },
+        )
+        LocationDialog.BOOST -> BeaconBoostDialog(
+            draft = draft,
+            currentWifi = currentWifi,
+            wifiTools = wifiTools,
+            locating = fixRequest == FixRequest.Locating,
+            onUseCurrentLocation = onUseCurrentLocation,
+            onConfirm = { boost, zones, networks ->
+                onDraftChange(
+                    draft.copy(
+                        beaconBoost = boost?.name,
+                        beaconBoostZones = zones.map { it.name }.toSet(),
+                        beaconBoostWifiNetworks = networks,
+                    )
+                )
+                editing = null
             },
             onDismiss = { editing = null },
         )
-        LocationDialog.BEACON_CALIBRATE -> draft.beaconKey?.let { key ->
-            CalibrationDialog(
-                sample = { beaconTools.sample(key) },
-                onConfirm = { threshold ->
-                    onDraftChange(draft.copy(beaconRssiThreshold = threshold))
-                    editing = null
-                },
+        LocationDialog.TIMING -> BeaconTimingDialog(
+            preset = placePreset,
+            custom = placeTiming,
+            defaultTiming = beaconTools.defaultTiming,
+            onConfirm = { preset, custom ->
+                val isCustom = preset == BeaconPreset.CUSTOM
+                onDraftChange(
+                    draft.copy(
+                        beaconPreset = preset?.name,
+                        // The numbers only matter for Advanced; other choices keep none.
+                        beaconArriveSec = (custom.arriveMs / 1_000).toInt().takeIf { isCustom },
+                        beaconLeaveSec = (custom.leaveMs / 1_000).toInt().takeIf { isCustom },
+                        beaconRecheckSec = (custom.recheckMs / 1_000).toInt().takeIf { isCustom },
+                        beaconScanSpeed = custom.scanSpeed.name.takeIf { isCustom },
+                    )
+                )
+                editing = null
+            },
+            onDismiss = { editing = null },
+            boostSummary = boostSummary(LocalContext.current, draft),
+            onOpenBoost = { editing = LocationDialog.BOOST },
+        )
+        LocationDialog.NEAR_INFO -> NearMeansInfoDialog(
+            // The beacon section's 1 m signal; the paired-device section has none saved.
+            oneMeterDbm = draft.knownOneMeterDbm.takeIf { PlaceSignal.BEACON in signals },
+            onDismiss = { editing = null },
+        )
+        LocationDialog.BEACON_LIVE -> draft.beaconKey?.let { key ->
+            LiveSignalDialog(
+                matchKey = key,
+                address = draft.beaconAddress,
+                thresholdDbm = draft.beaconRssiThreshold,
+                oneMeterDbm = draft.knownOneMeterDbm,
+                watch = beaconTools.watch,
                 onDismiss = { editing = null },
             )
         }
+        LocationDialog.DEVICE_LIVE -> draft.btAddress?.let { address ->
+            LiveSignalDialog(
+                matchKey = BeaconRules.deviceKey(address),
+                address = PairedDevices.normalize(address),
+                thresholdDbm = draft.btRssiThreshold,
+                oneMeterDbm = null,
+                watch = beaconTools.watch,
+                onDismiss = { editing = null },
+            )
+        }
+        LocationDialog.BEACON_RANGE -> RangeCalculatorDialog(
+            savedOneMeter = draft.knownOneMeterDbm,
+            readAdvertised = {
+                val key = draft.beaconKey
+                if (key != null && beaconTools.hasPermission && beaconTools.bluetoothOn) beaconTools.advertisedPower(key) else null
+            },
+            measureOneMeter = { draft.beaconKey?.let { beaconTools.sample(it) }.orEmpty() },
+            onUse = { value, oneMeter ->
+                onDraftChange(draft.copy(beaconRssiThreshold = -value, beaconOneMeterDbm = oneMeter ?: draft.knownOneMeterDbm))
+                editing = null
+            },
+            onDismiss = { editing = null },
+        )
+        LocationDialog.DEVICE_RANGE -> RangeCalculatorDialog(
+            savedOneMeter = null,
+            // Paired devices don't broadcast their 1 m signal; it can be measured.
+            readAdvertised = { null },
+            measureOneMeter = {
+                draft.btAddress?.takeIf { beaconTools.hasPermission && beaconTools.bluetoothOn }
+                    ?.let { beaconTools.sample(BeaconRules.deviceKey(it)) }
+                    .orEmpty()
+            },
+            onUse = { value, _ ->
+                onDraftChange(draft.copy(btRssiThreshold = -value))
+                editing = null
+            },
+            onDismiss = { editing = null },
+        )
         LocationDialog.BEACON_THRESHOLD -> NumberDialog(
             title = stringResource(R.string.beacon_threshold),
             label = stringResource(R.string.beacon_threshold_label),
@@ -547,20 +745,10 @@ fun LocationEditorScreen(
             seenNearby = pairedDeviceTools.seenNearby.takeIf { draft.btDetection == BtDetection.NEARBY },
             onPick = { device ->
                 onDraftChange(draft.copy(btAddress = device.address, btName = device.name))
-                editing = if (draft.btDetection == BtDetection.NEARBY && beaconTools.hasPermission) LocationDialog.DEVICE_CALIBRATE else null
+                editing = null
             },
             onDismiss = { editing = null },
         )
-        LocationDialog.DEVICE_CALIBRATE -> draft.btAddress?.let { address ->
-            CalibrationDialog(
-                sample = { beaconTools.sample(BeaconRules.deviceKey(address)) },
-                onConfirm = { threshold ->
-                    onDraftChange(draft.copy(btRssiThreshold = threshold))
-                    editing = null
-                },
-                onDismiss = { editing = null },
-            )
-        }
         LocationDialog.DEVICE_THRESHOLD -> NumberDialog(
             title = stringResource(R.string.beacon_threshold),
             label = stringResource(R.string.beacon_threshold_label),
@@ -587,7 +775,16 @@ fun LocationEditorScreen(
         LocationDialog.DELETE -> AlertDialog(
             onDismissRequest = { editing = null },
             title = { Text(stringResource(R.string.location_delete_title, draft.name)) },
-            text = { Text(stringResource(R.string.location_delete_body)) },
+            text = {
+                Text(
+                    if (sleepPlaceOf.isEmpty()) {
+                        stringResource(R.string.location_delete_body)
+                    } else {
+                        stringResource(R.string.place_sleep_delete_body, sleepPlaceOf.joinToString()) + "\n\n" +
+                            stringResource(R.string.location_delete_body)
+                    }
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     editing = null
@@ -599,6 +796,91 @@ fun LocationEditorScreen(
             },
         )
         null -> Unit
+    }
+
+    if (pickingWifi) {
+        WifiPickerDialog(
+            tools = wifiTools,
+            connected = currentWifi,
+            alreadyAdded = draft.wifiNetworks,
+            onAdd = { picked ->
+                onDraftChange(draft.copy(wifiNetworks = draft.wifiNetworks + picked))
+                pickingWifi = false
+            },
+            onDismiss = { pickingWifi = false },
+        )
+    }
+
+    settingUp?.let { kind ->
+        val initial = if (kind == SetupKind.BEACON) {
+            BeaconSetupState(
+                key = draft.beaconKey,
+                address = draft.beaconAddress,
+                label = draft.beaconName,
+                oneMeterDbm = draft.knownOneMeterDbm,
+                name = beaconTools.nameOf(draft.beaconKey, draft.beaconAddress).orEmpty(),
+                thresholdDbm = draft.beaconKey?.let { draft.beaconRssiThreshold },
+            )
+        } else {
+            BeaconSetupState(
+                key = draft.btAddress?.let(BeaconRules::deviceKey),
+                address = draft.btAddress,
+                label = draft.btName,
+                name = draft.btAddress?.let { beaconTools.nameOf(BeaconRules.deviceKey(it), PairedDevices.normalize(it)) }.orEmpty(),
+                thresholdDbm = draft.btAddress?.let { draft.btRssiThreshold },
+            )
+        }
+        BeaconSetupFlow(
+            kind = kind,
+            initial = initial,
+            beaconTools = beaconTools,
+            pairedDeviceTools = pairedDeviceTools,
+            onDone = { result ->
+                // Only Done writes; Cancel changed nothing.
+                val nameAddress = if (kind == SetupKind.DEVICE) result.address?.let(PairedDevices::normalize) else result.address
+                if (result.name.isNotBlank() && result.name != beaconTools.nameOf(result.key, nameAddress)) {
+                    beaconTools.rename(result.key, nameAddress, result.name)
+                }
+                onDraftChange(
+                    if (kind == SetupKind.BEACON) {
+                        draft.copy(
+                            beaconKey = result.key,
+                            beaconAddress = result.address,
+                            beaconName = result.name.ifBlank { null } ?: result.label,
+                            beaconOneMeterDbm = result.oneMeterDbm,
+                            beaconRssiThreshold = result.thresholdDbm,
+                        )
+                    } else {
+                        draft.copy(
+                            btAddress = result.address,
+                            btName = result.label ?: draft.btName,
+                            btRssiThreshold = result.thresholdDbm,
+                        )
+                    }
+                )
+                settingUp = null
+            },
+            onCancel = { settingUp = null },
+        )
+    }
+
+    measuring?.let { (kind, method) ->
+        val key = if (kind == SetupKind.BEACON) draft.beaconKey else draft.btAddress?.let(BeaconRules::deviceKey)
+        if (key != null) {
+            BeaconMeasureDialog(
+                watch = beaconTools.watch,
+                key = key,
+                method = method,
+                oneMeterDbm = if (kind == SetupKind.BEACON) draft.knownOneMeterDbm else null,
+                onUse = { threshold ->
+                    onDraftChange(
+                        if (kind == SetupKind.BEACON) draft.copy(beaconRssiThreshold = threshold) else draft.copy(btRssiThreshold = threshold)
+                    )
+                    measuring = null
+                },
+                onDismiss = { measuring = null },
+            )
+        }
     }
 
     editingSlot?.let { index ->
@@ -619,7 +901,8 @@ fun LocationEditorScreen(
 }
 
 private enum class LocationDialog {
-    COORDINATES, RADIUS, BEACON_PICK, BEACON_CALIBRATE, BEACON_THRESHOLD, DEVICE_PICK, DEVICE_CALIBRATE, DEVICE_THRESHOLD, TARGET, DELETE,
+    COORDINATES, RADIUS, BEACON_THRESHOLD, BEACON_RANGE, BEACON_LIVE, RANGE_BEACON, NEAR_INFO,
+    DEVICE_PICK, DEVICE_THRESHOLD, DEVICE_RANGE, DEVICE_LIVE, RANGE_DEVICE, TIMING, BOOST, TARGET, DELETE,
 }
 
 /**
@@ -640,25 +923,13 @@ private fun PairedDevicePickerDialog(
         title = { Text(stringResource(R.string.bt_device_pick)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (devices.isEmpty()) Text(stringResource(R.string.bt_device_none_paired))
-                if (seenNearby != null && seen == null) {
-                    CircularProgressIndicator()
-                    Text(stringResource(R.string.bt_device_checking_nearby))
-                }
-                devices.forEach { device ->
-                    val heard = seen?.get(device.address)
-                    val nearbyNote = when {
-                        seenNearby == null || seen == null -> null
-                        heard != null -> stringResource(R.string.bt_device_heard, heard)
-                        else -> stringResource(R.string.bt_device_not_heard)
-                    }
-                    SettingsRow(
-                        icon = pairedDeviceIcon(device.kind),
-                        title = device.name,
-                        summary = listOfNotNull(stringResource(pairedDeviceKindLabel(device.kind)), nearbyNote).joinToString(" · "),
-                        onClick = { onPick(device) },
-                    )
-                }
+                PairedDeviceList(
+                    devices = devices,
+                    seen = seen,
+                    scanning = seenNearby != null && seen == null,
+                    selectedAddress = null,
+                    onPick = onPick,
+                )
                 Text(
                     stringResource(if (seenNearby != null) R.string.bt_device_pick_nearby_hint else R.string.bt_device_pick_hint),
                     style = MaterialTheme.typography.bodySmall,
@@ -670,103 +941,77 @@ private fun PairedDevicePickerDialog(
     )
 }
 
-private fun pairedDeviceIcon(kind: PairedDeviceKind) = when (kind) {
-    PairedDeviceKind.AUDIO -> Icons.Filled.Headphones
-    PairedDeviceKind.WATCH -> Icons.Filled.Watch
-    PairedDeviceKind.COMPUTER -> Icons.Filled.Computer
-    PairedDeviceKind.PHONE -> Icons.Filled.Smartphone
-    PairedDeviceKind.INPUT -> Icons.Filled.Keyboard
-    PairedDeviceKind.OTHER -> Icons.Filled.Bluetooth
-}
-
-private fun pairedDeviceKindLabel(kind: PairedDeviceKind): Int = when (kind) {
-    PairedDeviceKind.AUDIO -> R.string.bt_kind_audio
-    PairedDeviceKind.WATCH -> R.string.bt_kind_watch
-    PairedDeviceKind.COMPUTER -> R.string.bt_kind_computer
-    PairedDeviceKind.PHONE -> R.string.bt_kind_phone
-    PairedDeviceKind.INPUT -> R.string.bt_kind_input
-    PairedDeviceKind.OTHER -> R.string.bt_kind_other
-}
-
-/** A ~15 s scan, then the beacons heard, strongest first; tap one to use it. */
+/**
+ * What "Near means" numbers mean for *this* beacon: from its 1 m signal ([oneMeterDbm], or a
+ * typical one), the value at a few distances and good starting values for common spots, worked
+ * out with [RangeRules]. Then why calibrating beats guessing, and a tip for multi-format beacons.
+ */
 @Composable
-private fun BeaconPickerDialog(
-    discover: suspend () -> List<BeaconSighting>,
-    onPick: (BeaconSighting) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var found by remember { mutableStateOf<List<BeaconSighting>?>(null) }
-    LaunchedEffect(Unit) { found = discover() }
+private fun NearMeansInfoDialog(oneMeterDbm: Int?, onDismiss: () -> Unit) {
+    val oneMeter = oneMeterDbm ?: RangeRules.DEFAULT_ONE_METER_DBM
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.beacon_pick)) },
+        title = { Text(stringResource(R.string.near_info_title)) },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                val list = found
-                when {
-                    list == null -> {
-                        CircularProgressIndicator()
-                        Text(stringResource(R.string.beacon_scanning))
-                    }
-                    list.isEmpty() -> Text(stringResource(R.string.beacon_none_found))
-                    else -> list.forEach { sighting ->
-                        SettingsRow(
-                            icon = Icons.Filled.Bluetooth,
-                            title = sighting.label,
-                            summary = "${stringResource(beaconTypeLabel(sighting))} · ${sighting.rssi} dBm",
-                            onClick = { onPick(sighting) },
-                        )
-                    }
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(stringResource(R.string.near_info_intro), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (oneMeterDbm != null) {
+                        stringResource(R.string.near_info_one_meter_known, oneMeterDbm)
+                    } else {
+                        stringResource(R.string.near_info_one_meter_typical, oneMeter)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(stringResource(R.string.near_info_distances_title), style = MaterialTheme.typography.titleSmall)
+                NEAR_INFO_DISTANCES.forEach { (labelRes, meters) ->
+                    Text(
+                        "• " + stringResource(R.string.near_info_line, RangeRules.typedValueAt(meters, oneMeter), stringResource(labelRes)),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
-                Text(stringResource(R.string.beacon_pick_hint), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.near_info_uses_title), style = MaterialTheme.typography.titleSmall)
+                NEAR_INFO_USES.forEach { use ->
+                    val value = RangeRules.suggest(oneMeter, use.walls, use.farthestMeters).typedValue
+                    Text("• " + stringResource(R.string.near_info_line, value, stringResource(use.labelRes)), style = MaterialTheme.typography.bodyMedium)
+                }
+                Text("• " + stringResource(R.string.near_info_use_house), style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.beacon_feasy_tip), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    stringResource(R.string.near_info_caveat),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(stringResource(R.string.near_info_tools), style = MaterialTheme.typography.bodyMedium)
             }
         },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
     )
 }
 
-/** Sit at your spot while it listens for ~20 s; the threshold is set a little below the typical signal. */
-@Composable
-private fun CalibrationDialog(
-    sample: suspend () -> List<Int>,
-    onConfirm: (Int) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var readings by remember { mutableStateOf<List<Int>?>(null) }
-    LaunchedEffect(Unit) { readings = sample() }
-    val threshold = readings?.let(BeaconRules::calibratedThreshold)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.beacon_calibrate)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val list = readings
-                when {
-                    list == null -> {
-                        CircularProgressIndicator()
-                        Text(stringResource(R.string.beacon_calibrating))
-                    }
-                    threshold == null -> Text(stringResource(R.string.beacon_calibrate_failed))
-                    else -> Text(stringResource(R.string.beacon_calibrated, list.size, list.sorted()[list.size / 2], threshold))
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { threshold?.let(onConfirm) }, enabled = threshold != null) {
-                Text(stringResource(android.R.string.ok))
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },
-    )
-}
+/** The distances the ⓘ guide lists: what to type to count as near up to there. */
+private val NEAR_INFO_DISTANCES = listOf(
+    R.string.near_info_d_touching to 0.05,
+    R.string.near_info_d_25cm to 0.25,
+    R.string.near_info_d_1m to 1.0,
+    R.string.near_info_d_2m to 2.5,
+    R.string.near_info_d_4m to 4.0,
+    R.string.near_info_d_7m to 7.5,
+    R.string.near_info_d_15m to 15.0,
+)
 
-private fun beaconTypeLabel(sighting: BeaconSighting): Int = when (sighting.type) {
-    com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconType.IBEACON -> R.string.beacon_type_ibeacon
-    com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconType.EDDYSTONE -> R.string.beacon_type_eddystone
-    com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconType.APP -> R.string.beacon_type_app
-    com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconType.DEVICE -> R.string.beacon_type_device
-}
+/** A common spot, as the 📐 calculator would work it out (the beacon in the middle). */
+private class NearInfoUse(val labelRes: Int, val farthestMeters: Double, val walls: Walls)
+
+private val NEAR_INFO_USES = listOf(
+    NearInfoUse(R.string.near_info_use_desk, RangeRules.farthestInRoom(1.2, 0.8, BeaconSpot.CENTER), Walls.OPEN),
+    NearInfoUse(R.string.near_info_use_nightstand, 1.0, Walls.OPEN),
+    NearInfoUse(R.string.near_info_use_small_room, RangeRules.farthestInArea(12.0, BeaconSpot.CENTER), Walls.OPEN),
+    NearInfoUse(R.string.near_info_use_large_room, RangeRules.farthestInArea(25.0, BeaconSpot.CENTER), Walls.OPEN),
+    NearInfoUse(R.string.near_info_use_studio, RangeRules.farthestInArea(40.0, BeaconSpot.CENTER), Walls.SOME),
+    NearInfoUse(R.string.near_info_use_one_bed, RangeRules.farthestInArea(65.0, BeaconSpot.CENTER), Walls.SOME),
+    NearInfoUse(R.string.near_info_use_two_bed, RangeRules.farthestInArea(95.0, BeaconSpot.CENTER), Walls.SOME),
+)
 
 /** One time slot: days, start and end (an end at or before the start runs past midnight). */
 @Composable

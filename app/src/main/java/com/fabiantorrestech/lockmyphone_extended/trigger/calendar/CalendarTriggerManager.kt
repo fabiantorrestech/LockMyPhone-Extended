@@ -16,6 +16,15 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
 import com.fabiantorrestech.lockmyphone_extended.trigger.ProfileLockStarter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
+import com.fabiantorrestech.lockmyphone_extended.trigger.ConflictRules
+import com.fabiantorrestech.lockmyphone_extended.trigger.TimeSpan
+import com.fabiantorrestech.lockmyphone_extended.trigger.TimedCommitment
+import java.time.ZonedDateTime
+
+
+/** A calendar trigger's lock that clashes with [otherName] in the coming week. */
+data class CalendarClash(val window: CalendarWindow, val otherName: String)
 
 /**
  * Runs the calendar triggers: starts a lock for a matching event that's happening now, arms an
@@ -27,6 +36,8 @@ class CalendarTriggerManager(
     private val context: Context,
     private val database: AppDatabase,
     private val lockStarter: ProfileLockStarter,
+    /** Whether a calendar trigger is being edited or just changed; its event waits, unhandled, until it isn't. */
+    private val isHeld: (Long) -> Boolean,
     /** Whether you're at a place, for calendar triggers set to "Only while at…". */
     private val isAtPlace: (Long) -> Boolean,
 ) {
@@ -58,6 +69,8 @@ class CalendarTriggerManager(
         // An "Only while at…" window that isn't satisfied yet stays unhandled, so arriving later starts it.
         windows.filter { now >= it.startMs && now < it.endMs && !isHandled(it) }
             .filter { window -> window.trigger.requiredPlaceId?.let(isAtPlace) ?: true }
+            // A held trigger's event stays unhandled, so the catch-up when the wait ends starts it.
+            .filterNot { window -> isHeld(window.trigger.id) }
             .forEach { window ->
             markHandled(window)
             withContext(Dispatchers.Main) { startLock(window, window.endMs - now) }
@@ -75,6 +88,37 @@ class CalendarTriggerManager(
         watchCalendarChanges()
     }
 
+    /**
+     * For each of [targets], its first lock in the coming week that overlaps a schedule, a
+     * place's time slot or another calendar trigger's lock. Only one lock runs at a time, so the
+     * one that starts first runs and the other is skipped (ADR 0005).
+     *
+     * @param others all saved calendar triggers (a target isn't compared with itself).
+     * @param commitments the schedules and time-slot places.
+     */
+    suspend fun clashes(
+        targets: List<CalendarTrigger>,
+        others: List<CalendarTrigger>,
+        commitments: List<TimedCommitment>,
+    ): Map<Long, CalendarClash> = withContext(Dispatchers.IO) {
+        if (!reader.hasPermission() || targets.isEmpty()) return@withContext emptyMap()
+        val now = System.currentTimeMillis()
+        val events = reader.occurrences(now - LOOK_BACK_MS, now + CLASH_LOOK_AHEAD_MS)
+        val timed = commitments.map { it.name to ConflictRules.spansBetween(it, ZonedDateTime.now(), CLASH_LOOK_AHEAD_DAYS) }
+        val otherWindows = CalendarRules.windows(others.filter { it.enabled }, events)
+        targets.mapNotNull { target ->
+            val rivals = timed + otherWindows.filter { it.trigger.id != target.id }
+                .groupBy { it.trigger.name }
+                .map { (name, windows) -> name to windows.map { TimeSpan(it.startMs, it.endMs) } }
+            CalendarRules.windows(listOf(target.copy(enabled = true)), events)
+                .filter { it.endMs > now }
+                .firstNotNullOfOrNull { window ->
+                    ConflictRules.firstSpanClash(TimeSpan(window.startMs, window.endMs), rivals)?.let { CalendarClash(window, it) }
+                }
+                ?.let { target.id to it }
+        }.toMap()
+    }
+
     /** The next event [trigger] would lock for, for the editor's preview. */
     suspend fun nextMatch(trigger: CalendarTrigger): CalendarWindow? = withContext(Dispatchers.IO) {
         if (!reader.hasPermission()) return@withContext null
@@ -87,13 +131,14 @@ class CalendarTriggerManager(
     private suspend fun startLock(window: CalendarWindow, durationMs: Long) {
         val label = context.getString(R.string.calendar_lock_label, window.event.title.ifBlank { window.trigger.name })
         val profileId = window.trigger.profileId
-        if (profileId == null) {
-            lockStarter.startQuick(durationMs = durationMs, label = label)
+        // A stronger or equal lock running means this event is skipped (ADR 0005).
+        val result = if (profileId == null) {
+            lockStarter.startQuick(durationMs = durationMs, label = label, kind = LockKind.CALENDAR, ownerId = window.trigger.id)
         } else {
             val profile = withContext(Dispatchers.IO) { database.profileDao().getById(profileId) } ?: return
-            lockStarter.start(profile, durationMs = durationMs, label = label)
+            lockStarter.start(profile, durationMs = durationMs, label = label, kind = LockKind.CALENDAR, ownerId = window.trigger.id)
         }
-        Log.i(TAG, "'${window.trigger.name}' locked for '${window.event.title}'")
+        Log.i(TAG, "'${window.trigger.name}' for '${window.event.title}': $result")
     }
 
     /** A one-shot job that runs when any calendar data changes; it's re-armed after each run. */
@@ -127,6 +172,10 @@ class CalendarTriggerManager(
         const val ALARM_REQUEST_CODE = 4101
         const val LOOK_BACK_MS = 24L * 60 * 60 * 1_000
         const val LOOK_AHEAD_MS = 8L * 24 * 60 * 60 * 1_000
+
+        /** How far ahead clashes with other commitments are predicted. */
+        const val CLASH_LOOK_AHEAD_DAYS = 7
+        const val CLASH_LOOK_AHEAD_MS = CLASH_LOOK_AHEAD_DAYS * 24L * 60 * 60 * 1_000
         const val CHANGE_SETTLE_MS = 5_000L
         const val CHANGE_MAX_DELAY_MS = 60_000L
     }

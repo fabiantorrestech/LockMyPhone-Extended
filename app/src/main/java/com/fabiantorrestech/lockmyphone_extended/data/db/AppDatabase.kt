@@ -113,6 +113,13 @@ interface LocationTriggerDao {
     @Query("SELECT * FROM location_triggers WHERE id = :id")
     suspend fun getById(id: Long): LocationTrigger?
 
+    /**
+     * A beacon got a new nickname: every place watching it shows the new name, whichever of its
+     * formats the place matches ([address] groups them; null when unknown).
+     */
+    @Query("UPDATE location_triggers SET beaconName = :name WHERE beaconKey = :key OR (:address IS NOT NULL AND beaconAddress = :address)")
+    suspend fun renameBeacon(key: String, address: String?, name: String)
+
     @Insert
     suspend fun insert(trigger: LocationTrigger): Long
 
@@ -160,9 +167,11 @@ interface BackupDao {
     @Query("DELETE FROM location_triggers") suspend fun clearLocations()
     @Query("DELETE FROM calendar_triggers") suspend fun clearCalendarTriggers()
     @Query("DELETE FROM nfc_tags") suspend fun clearNfcTags()
+    @Query("DELETE FROM beacon_names") suspend fun clearBeaconNames()
     @Query("DELETE FROM alarm_triggers") suspend fun clearAlarmTriggers()
     @Query("DELETE FROM schedules") suspend fun clearSchedules()
     @Query("DELETE FROM profiles") suspend fun clearProfiles()
+    @Query("DELETE FROM wake_triggers") suspend fun clearWakeTriggers()
 
     @Insert suspend fun insertProfiles(items: List<LockProfile>)
     @Insert suspend fun insertSchedules(items: List<LockSchedule>)
@@ -171,6 +180,8 @@ interface BackupDao {
     @Insert suspend fun insertLocationSlots(items: List<LocationSlot>)
     @Insert suspend fun insertCalendarTriggers(items: List<CalendarTrigger>)
     @Insert suspend fun insertNfcTags(items: List<NfcTag>)
+    @Insert suspend fun insertBeaconNames(items: List<BeaconName>)
+    @Insert suspend fun insertWakeTriggers(items: List<WakeTrigger>)
 
     /** Children are cleared first and parents inserted first, so the foreign keys always hold. IDs are kept. */
     @Transaction
@@ -182,7 +193,11 @@ interface BackupDao {
         slots: List<LocationSlot>,
         calendarTriggers: List<CalendarTrigger>,
         nfcTags: List<NfcTag>,
+        beaconNames: List<BeaconName>,
+        wakeTriggers: List<WakeTrigger>,
     ) {
+        clearWakeTriggers()
+        clearBeaconNames()
         clearNfcTags()
         clearLocationSlots()
         clearLocations()
@@ -197,6 +212,8 @@ interface BackupDao {
         insertLocationSlots(slots)
         insertCalendarTriggers(calendarTriggers)
         insertNfcTags(nfcTags)
+        insertBeaconNames(beaconNames)
+        insertWakeTriggers(wakeTriggers)
     }
 }
 
@@ -210,6 +227,9 @@ interface NfcTagDao {
 
     @Query("SELECT * FROM nfc_tags WHERE uid = :uid")
     suspend fun findByUid(uid: String): NfcTag?
+
+    @Query("SELECT * FROM nfc_tags WHERE id = :id")
+    suspend fun getById(id: Long): NfcTag?
 
     @Insert
     suspend fun insert(tag: NfcTag): Long
@@ -275,12 +295,62 @@ interface CalendarTriggerDao {
 }
 
 @Dao
+interface WakeTriggerDao {
+    @Query("SELECT * FROM wake_triggers ORDER BY sortOrder, id")
+    fun observeAll(): Flow<List<WakeTrigger>>
+
+    @Query("SELECT * FROM wake_triggers ORDER BY sortOrder, id")
+    suspend fun getAll(): List<WakeTrigger>
+
+    @Query("SELECT * FROM wake_triggers WHERE enabled = 1")
+    suspend fun getEnabled(): List<WakeTrigger>
+
+    @Query("SELECT * FROM wake_triggers WHERE enabled = 1")
+    fun observeEnabled(): Flow<List<WakeTrigger>>
+
+    @Query("SELECT * FROM wake_triggers WHERE id = :id")
+    suspend fun getById(id: Long): WakeTrigger?
+
+    @Insert
+    suspend fun insert(trigger: WakeTrigger): Long
+
+    @Update
+    suspend fun update(trigger: WakeTrigger)
+
+    @Delete
+    suspend fun delete(trigger: WakeTrigger)
+
+    /** Marks [day] (ISO date) as the day it locked, without touching the rest (the editor may have it open). */
+    @Query("UPDATE wake_triggers SET lastFiredDay = :day WHERE id = :id")
+    suspend fun setLastFiredDay(id: Long, day: String)
+
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM wake_triggers")
+    suspend fun nextSortOrder(): Int
+
+    /** Inserts at the end of the list. */
+    @Transaction
+    suspend fun insertLast(trigger: WakeTrigger): Long = insert(trigger.copy(sortOrder = nextSortOrder()))
+
+    @Query("UPDATE wake_triggers SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun setSortOrder(id: Long, sortOrder: Int)
+
+    /** Saves a new list order: [ids] from top to bottom. */
+    @Transaction
+    suspend fun reorder(ids: List<Long>) {
+        ids.forEachIndexed { index, id -> setSortOrder(id, index) }
+    }
+}
+
+@Dao
 interface LocationSlotDao {
     @Query("SELECT * FROM location_slots WHERE locationId = :locationId ORDER BY startMinuteOfDay")
     suspend fun getForLocation(locationId: Long): List<LocationSlot>
 
     @Query("SELECT * FROM location_slots")
     suspend fun getAll(): List<LocationSlot>
+
+    @Query("SELECT * FROM location_slots")
+    fun observeAll(): Flow<List<LocationSlot>>
 
     @Query("DELETE FROM location_slots WHERE locationId = :locationId")
     suspend fun deleteForLocation(locationId: Long)
@@ -344,12 +414,25 @@ class Converters {
     @TypeConverter
     fun toPackageSet(value: String): Set<String> =
         if (value.isEmpty()) emptySet() else value.split('|').toSet()
+
+    @TypeConverter
+    fun fromIdSet(ids: Set<Long>): String = ids.sorted().joinToString(",")
+
+    @TypeConverter
+    fun toIdSet(value: String): Set<Long> =
+        if (value.isEmpty()) emptySet() else value.split(',').mapNotNull { it.toLongOrNull() }.toSet()
+
+    @TypeConverter
+    fun fromWifiNetworks(networks: List<WifiNetwork>): String = WifiNetworksJson.write(networks)
+
+    @TypeConverter
+    fun toWifiNetworks(value: String): List<WifiNetwork> = WifiNetworksJson.read(value)
 }
 
 /** See ADR 0003: kept in device-protected storage so receivers can read it before the first unlock. */
 @Database(
-    entities = [LockProfile::class, LockSchedule::class, AlarmTrigger::class, LocationTrigger::class, LocationSlot::class, CalendarTrigger::class, NfcTag::class],
-    version = 16,
+    entities = [LockProfile::class, LockSchedule::class, AlarmTrigger::class, LocationTrigger::class, LocationSlot::class, CalendarTrigger::class, NfcTag::class, BeaconName::class, WakeTrigger::class],
+    version = 25,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -361,7 +444,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun locationSlotDao(): LocationSlotDao
     abstract fun calendarTriggerDao(): CalendarTriggerDao
     abstract fun nfcTagDao(): NfcTagDao
+    abstract fun beaconNameDao(): BeaconNameDao
     abstract fun backupDao(): BackupDao
+    abstract fun wakeTriggerDao(): WakeTriggerDao
 
     companion object {
         private const val NAME = "lockmyphone.db"
@@ -371,7 +456,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.createDeviceProtectedStorageContext(),
                 AppDatabase::class.java,
                 NAME,
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16).build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25).build()
 
         /** v2: profiles gain a Do Not Disturb switch (off for existing profiles). */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -536,6 +621,137 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE profiles ADD COLUMN nfcUnlockTagIds TEXT NOT NULL DEFAULT ''")
             }
         }
+
+        /**
+         * v17: a tag links to one, several or all locks instead of one profile. The table is rebuilt
+         * without the profile foreign key (deleting a profile no longer deletes its tags); each
+         * tag keeps its profile (or Quick lock) as its one linked lock.
+         */
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(CREATE_NFC_TAGS_V17.replace("`nfc_tags`", "`nfc_tags_new`"))
+                db.execSQL(
+                    "INSERT INTO nfc_tags_new (id, name, icon, uid, action, duringLock, linkMode, linkedLockIds, " +
+                        "durationSec, enabled, sortOrder, secret) " +
+                        "SELECT id, name, icon, uid, action, duringLock, 'ONE', COALESCE(CAST(profileId AS TEXT), 'quick'), " +
+                        "durationSec, enabled, sortOrder, secret FROM nfc_tags"
+                )
+                db.execSQL("DROP TABLE nfc_tags")
+                db.execSQL("ALTER TABLE nfc_tags_new RENAME TO nfc_tags")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_nfc_tags_uid` ON `nfc_tags` (`uid`)")
+            }
+        }
+
+        /** v18: a Start tag can take over a running manual lock. */
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE nfc_tags ADD COLUMN takeOver INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * v23: several Wi-Fi networks per place (M20). Each place's one router (and its Listen
+         * harder router) becomes a one-network list; the old columns stay, unused.
+         */
+        /** v25: Morning lock stands down for alarm locks, counts from the first screen-on, per-day end, late check (M22.1). */
+        private val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE wake_triggers ADD COLUMN yieldToAlarms INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE wake_triggers ADD COLUMN yieldAlarmIds TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE wake_triggers ADD COLUMN countFromScreenOn INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE wake_triggers ADD COLUMN altEndMin INTEGER")
+                db.execSQL("ALTER TABLE wake_triggers ADD COLUMN altDaysMask INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wake_triggers ADD COLUMN lateCheck INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wake_triggers ADD COLUMN lateCheckAfterMin INTEGER NOT NULL DEFAULT 660")
+            }
+        }
+
+        /** v24: Morning lock (M22). */
+        private val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `wake_triggers` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `icon` TEXT, " +
+                        "`enabled` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL, `profileId` INTEGER, " +
+                        "`lockMinutes` INTEGER NOT NULL, `windowStartMin` INTEGER NOT NULL, `windowEndMin` INTEGER NOT NULL, " +
+                        "`daysMask` INTEGER NOT NULL, `alarmFirst` INTEGER NOT NULL, `alarmPackages` TEXT NOT NULL, " +
+                        "`minSleepMinutes` INTEGER NOT NULL, `sleepPlaceIds` TEXT NOT NULL, `checkCharging` INTEGER NOT NULL, " +
+                        "`chargingMinutes` INTEGER NOT NULL, `checkPlace` INTEGER NOT NULL, `lastFiredDay` TEXT, " +
+                        "FOREIGN KEY(`profileId`) REFERENCES `profiles`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_wake_triggers_profileId` ON `wake_triggers` (`profileId`)")
+            }
+        }
+
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN wifiNetworks TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconBoostWifiNetworks TEXT NOT NULL DEFAULT '[]'")
+                db.query("SELECT id, wifiBssid, wifiSsid, beaconBoostWifiBssid, beaconBoostWifiSsid FROM location_triggers").use { cursor ->
+                    while (cursor.moveToNext()) {
+                        fun text(column: Int): String? = if (cursor.isNull(column)) null else cursor.getString(column)
+                        val presence = WifiNetworksJson.legacy(bssid = text(1), ssid = text(2))
+                        val boost = WifiNetworksJson.legacy(bssid = text(3), ssid = text(4))
+                        if (presence.isEmpty() && boost.isEmpty()) continue
+                        db.execSQL(
+                            "UPDATE location_triggers SET wifiNetworks = ?, beaconBoostWifiNetworks = ? WHERE id = ?",
+                            arrayOf<Any>(WifiNetworksJson.write(presence), WifiNetworksJson.write(boost), cursor.getLong(0)),
+                        )
+                    }
+                }
+            }
+        }
+
+        /** v22: when a beacon place listens harder before its beacon is heard (M19). */
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconBoost TEXT")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconBoostZones TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconBoostWifiBssid TEXT")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconBoostWifiSsid TEXT")
+            }
+        }
+
+        /** v21: a beacon place can react faster or slower than the default (M18). */
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconPreset TEXT")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconArriveSec INTEGER")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconLeaveSec INTEGER")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconRecheckSec INTEGER")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconScanSpeed TEXT")
+            }
+        }
+
+        /** v20: a beacon place remembers the beacon's address and its 1 m signal (ADR 0006). */
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconAddress TEXT")
+                db.execSQL("ALTER TABLE location_triggers ADD COLUMN beaconOneMeterDbm INTEGER")
+            }
+        }
+
+        /** v19: your own names for beacons. Copied from Room's generated schema. */
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `beacon_names` (`key` TEXT NOT NULL, `name` TEXT NOT NULL, PRIMARY KEY(`key`))")
+            }
+        }
+
+        /** Copied from Room's generated schema (v17), so the rebuilt table matches a fresh install. */
+        private const val CREATE_NFC_TAGS_V17 =
+            "CREATE TABLE IF NOT EXISTS `nfc_tags` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`name` TEXT NOT NULL, " +
+                "`icon` TEXT, " +
+                "`uid` TEXT NOT NULL, " +
+                "`action` TEXT NOT NULL, " +
+                "`duringLock` TEXT NOT NULL, " +
+                "`linkMode` TEXT NOT NULL, " +
+                "`linkedLockIds` TEXT NOT NULL, " +
+                "`durationSec` INTEGER, " +
+                "`enabled` INTEGER NOT NULL, " +
+                "`sortOrder` INTEGER NOT NULL, " +
+                "`secret` TEXT)"
 
         /** Copied from Room's generated schema (v15), so the migrated table matches a fresh install. */
         private const val CREATE_NFC_TAGS =

@@ -84,6 +84,8 @@ fun AlarmTriggerEditorScreen(
     onDelete: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The hold note and "Test now"; null for a new automation's editor or none at all. */
+    automation: AutomationEditorExtras? = null,
 ) {
     var editing by remember { mutableStateOf<TriggerDialog?>(null) }
     val learned = draft.packageName.isNotEmpty() && draft.notificationId != null
@@ -102,6 +104,7 @@ fun AlarmTriggerEditorScreen(
         onSave = onSave,
         onDelete = if (isNew) null else ({ editing = TriggerDialog.DELETE }),
         modifier = modifier,
+        automation = automation,
     ) {
         if (!notificationAccess) {
             Text(stringResource(R.string.alarm_trigger_needs_access), style = MaterialTheme.typography.bodyMedium)
@@ -338,9 +341,9 @@ private fun SpecificAlarmContent(
     }
 }
 
-/** Checkboxes for the alarm apps a "first alarm" trigger listens to. */
+/** Checkboxes for the alarm apps a "first alarm" trigger (or Morning lock) listens to. */
 @Composable
-private fun FirstAlarmApps(apps: List<LaunchableApp>, selected: Set<String>, onChange: (Set<String>) -> Unit) {
+fun FirstAlarmApps(apps: List<LaunchableApp>, selected: Set<String>, onChange: (Set<String>) -> Unit) {
     Column(Modifier.padding(vertical = 4.dp)) {
         if (apps.isEmpty()) {
             Text(stringResource(R.string.alarm_first_no_apps), style = MaterialTheme.typography.bodySmall, modifier = SectionContentPadding)

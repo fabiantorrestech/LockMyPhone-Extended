@@ -15,6 +15,8 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.ProfileLockStarter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.ZoneId
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
+import com.fabiantorrestech.lockmyphone_extended.core.lock.StartResult
 
 /**
  * Starts the lock for a dismissed alarm: right away, or after the trigger's delay using an
@@ -27,6 +29,8 @@ class AlarmTriggerFirer(
     private val endScheduler: LockEndScheduler,
     /** When a "day" starts for the trigger's day rules, in minutes past midnight. */
     private val dayStartMinutes: () -> Int,
+    /** A dismissal that counts (not a snooze, an active day): Morning lock stands down. */
+    private val onFired: suspend (triggerId: Long) -> Unit = {},
 ) {
 
     private val alarmManager = context.getSystemService(AlarmManager::class.java)
@@ -44,6 +48,7 @@ class AlarmTriggerFirer(
         if (trigger.kind == AlarmTriggerKind.FIRST_ALARM) {
             withContext(Dispatchers.IO) { dao.update(trigger.copy(lastFiredDay = day.toString())) }
         }
+        onFired(trigger.id)
         if (trigger.delayMinutes <= 0) {
             fire(trigger.id)
             return
@@ -64,14 +69,16 @@ class AlarmTriggerFirer(
         if (trigger == null || !trigger.enabled) return
         val label = context.getString(R.string.alarm_lock_label, trigger.name)
         val profileId = trigger.profileId
-        if (profileId == null) {
-            lockStarter.startQuick(durationMs = null, label = label)
+        // A stronger or equal lock running means this one is skipped (ADR 0005).
+        val result = if (profileId == null) {
+            lockStarter.startQuick(durationMs = null, label = label, kind = LockKind.ALARM, ownerId = trigger.id)
         } else {
             val profile = withContext(Dispatchers.IO) { database.profileDao().getById(profileId) } ?: return
-            lockStarter.start(profile, durationMs = null, label = label)
+            lockStarter.start(profile, durationMs = null, label = label, kind = LockKind.ALARM, ownerId = trigger.id)
         }
-        Log.i(TAG, "'${trigger.name}' dismissed; lock started")
-        if (trigger.activeRule == AlarmActiveRule.ONCE) {
+        Log.i(TAG, "'${trigger.name}' dismissed: $result")
+        // A one-time trigger stays on until it has really locked (not refused, not held for an edit).
+        if (trigger.activeRule == AlarmActiveRule.ONCE && result !is StartResult.Refused && result !is StartResult.Held) {
             // Re-read, so the first-alarm day saved at dismissal isn't overwritten.
             withContext(Dispatchers.IO) {
                 val dao = database.alarmTriggerDao()

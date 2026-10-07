@@ -16,6 +16,7 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.ProfileLockStarter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.ZonedDateTime
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
 
 /**
  * Keeps schedules running:
@@ -86,19 +87,21 @@ class ScheduleScheduler(
         now: ZonedDateTime,
     ) {
         val windowEndMs = window.end.toInstant().toEpochMilli()
-        val current = lockController.state.value
-        // Already locked until at least the window's end: leave it alone, so an allowed-app
-        // pass isn't interrupted by a needless relock.
-        if (current is LockState.Locked && current.session.endsAtMs >= windowEndMs) return
+        // Its own lock is already running: leave it alone.
+        val running = (lockController.state.value as? LockState.Locked)?.session?.source
+        if (running?.kind == LockKind.SCHEDULE && running.ownerId == window.schedule.id) return
 
         val remainingMs = windowEndMs - now.toInstant().toEpochMilli()
         if (remainingMs <= 0) return
-        lockStarter.start(
+        // A stronger or equal lock running means this window is skipped (ADR 0005).
+        val result = lockStarter.start(
             profile = profile,
             durationMs = remainingMs,
             label = context.getString(R.string.schedule_lock_label, profile.name),
+            kind = LockKind.SCHEDULE,
+            ownerId = window.schedule.id,
         )
-        Log.i(TAG, "Started scheduled lock '${profile.name}' until ${window.end}")
+        Log.i(TAG, "Scheduled lock '${profile.name}' until ${window.end}: $result")
     }
 
     private fun setAlarm(atMs: Long) {

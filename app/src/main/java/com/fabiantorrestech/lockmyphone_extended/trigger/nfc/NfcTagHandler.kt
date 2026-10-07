@@ -4,16 +4,31 @@ import android.content.Context
 import android.util.Log
 import com.fabiantorrestech.lockmyphone_extended.R
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockController
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockState
+import com.fabiantorrestech.lockmyphone_extended.core.lock.QUICK_LOCK_ID
 import com.fabiantorrestech.lockmyphone_extended.core.lock.StartResult
 import com.fabiantorrestech.lockmyphone_extended.data.SettingsStore
 import com.fabiantorrestech.lockmyphone_extended.data.db.AppDatabase
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
 import com.fabiantorrestech.lockmyphone_extended.trigger.ProfileLockStarter
+import com.fabiantorrestech.lockmyphone_extended.ui.formatAlreadyLocked
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+
+/** A lock a tag can start: a profile, or Quick lock. */
+data class LockChoice(val lockId: String, val name: String, val icon: String?)
+
+/** What a tap did, for the screen that saw it. */
+sealed interface TapResult {
+    /** Done (or refused): show this message. */
+    data class Message(val text: String) : TapResult
+
+    /** The tag is linked to several locks: ask which one to start. */
+    data class ChooseLock(val tag: NfcTag, val choices: List<LockChoice>) : TapResult
+}
 
 /**
  * Does what a tapped tag says (via [NfcRules]) and decides whether the NFC gate opens after an
@@ -46,7 +61,7 @@ class NfcTagHandler(
     }
 
     /**
-     * Acts on a tapped tag. Returns a short message saying what happened, for a toast.
+     * Acts on a tapped tag.
      *
      * @param code the code read from the tag itself, or null if it has none.
      * @param readInApp true when the app's own reader saw the tag (the gate). Only then can a tag
@@ -54,52 +69,79 @@ class NfcTagHandler(
      *   app could imitate with a copied ID. Starting a lock or its early-unlock wait is harmless,
      *   so those work either way.
      */
-    suspend fun onTagTapped(uid: String, code: String?, readInApp: Boolean): String {
+    suspend fun onTagTapped(uid: String, code: String?, readInApp: Boolean): TapResult {
         val tag = database.nfcTagDao().findByUid(uid)
         if (tag == null) {
             Log.i(TAG, "Unregistered tag $uid")
-            return context.getString(R.string.nfc_tap_unknown)
+            return message(R.string.nfc_tap_unknown)
         }
         val active = (lockController.state.value as? LockState.Locked)?.session?.takeIf { lockController.isLockActive() }
         val outcome = NfcRules.decideTap(tag, active, code)
         Log.i(TAG, "Tag $uid (${tag.name}): $outcome")
         return when (outcome) {
-            is TapOutcome.Start -> start(tag, outcome)
+            TapOutcome.Start -> {
+                val choices = startableLocks(tag)
+                when (choices.size) {
+                    0 -> message(R.string.nfc_tap_profile_missing, tag.name)
+                    1 -> TapResult.Message(startLock(tag, choices.single().lockId))
+                    else -> TapResult.ChooseLock(tag, choices)
+                }
+            }
             TapOutcome.StartBypassWait -> {
                 lockController.requestBypass()
-                context.getString(R.string.nfc_tap_bypass_started, tag.name)
+                message(R.string.nfc_tap_bypass_started, tag.name)
             }
             TapOutcome.EndLock -> if (readInApp) {
                 lockController.endLockRemotely()
-                context.getString(R.string.nfc_tap_ended, tag.name)
+                message(R.string.nfc_tap_ended, tag.name)
             } else {
-                context.getString(R.string.nfc_tap_end_needs_gate)
+                message(R.string.nfc_tap_end_needs_gate)
             }
-            is TapOutcome.Refused -> refusalText(outcome.reason, tag)
+            is TapOutcome.Refused -> TapResult.Message(refusalText(outcome.reason, tag, active))
         }
     }
 
-    private suspend fun start(tag: NfcTag, outcome: TapOutcome.Start): String {
+    /** The locks [tag] can start that still exist: its linked profiles in list order, then Quick lock. */
+    suspend fun startableLocks(tag: NfcTag): List<LockChoice> {
+        val profiles = database.profileDao().getAll()
+            .filter { tag.links(it.id.toString()) }
+            .map { LockChoice(it.id.toString(), it.name, it.icon) }
+        val quick = LockChoice(QUICK_LOCK_ID, context.getString(R.string.quick_lock), null)
+            .takeIf { tag.links(QUICK_LOCK_ID) }
+        return profiles + listOfNotNull(quick)
+    }
+
+    /** Starts one of the tag's locks (from the tap, or the chooser). Returns what happened, for a toast. */
+    suspend fun startLock(tag: NfcTag, lockId: String): String {
         val label = context.getString(R.string.nfc_lock_label, tag.name)
-        val durationMs = outcome.durationSec?.let { it * 1_000 }
-        val result = if (outcome.profileId == null) {
-            lockStarter.startQuick(durationMs, label)
+        val durationMs = tag.durationSec?.let { it * 1_000 }
+        val result = if (lockId == QUICK_LOCK_ID) {
+            lockStarter.startQuick(durationMs, label, LockKind.NFC, tag.id)
         } else {
-            val profile = database.profileDao().getById(outcome.profileId)
+            val profile = lockId.toLongOrNull()?.let { database.profileDao().getById(it) }
                 ?: return context.getString(R.string.nfc_tap_profile_missing, tag.name)
-            lockStarter.start(profile, durationMs, label)
+            lockStarter.start(profile, durationMs, label, LockKind.NFC, tag.id)
         }
         return when (result) {
-            StartResult.STARTED -> context.getString(R.string.nfc_tap_started, tag.name)
-            StartResult.ADMIN_NOT_ACTIVE -> context.getString(R.string.start_needs_admin)
+            StartResult.Started -> context.getString(R.string.nfc_tap_started, tag.name)
+            is StartResult.Replaced -> context.getString(R.string.nfc_tap_took_over, tag.name)
+            is StartResult.Refused -> formatAlreadyLocked(context, result.running)
+            StartResult.AdminNotActive -> context.getString(R.string.start_needs_admin)
+            is StartResult.Held -> result.untilMs?.let { untilMs ->
+                val seconds = ((untilMs - System.currentTimeMillis() + 999) / 1_000).coerceAtLeast(1)
+                context.getString(R.string.nfc_tap_held_cooldown, tag.name, seconds.toInt())
+            } ?: context.getString(R.string.nfc_tap_held_editing, tag.name)
         }
     }
 
-    private fun refusalText(reason: TapRefusal, tag: NfcTag): String = when (reason) {
+    private fun message(resId: Int, vararg args: Any): TapResult = TapResult.Message(context.getString(resId, *args))
+
+    private fun refusalText(reason: TapRefusal, tag: NfcTag, active: LockSession?): String = when (reason) {
         TapRefusal.UNKNOWN_TAG -> context.getString(R.string.nfc_tap_unknown)
         TapRefusal.TAG_OFF -> context.getString(R.string.nfc_tap_off, tag.name)
         TapRefusal.NO_LOCK_RUNNING -> context.getString(R.string.nfc_tap_no_lock, tag.name)
-        TapRefusal.NFC_NOT_ALLOWED -> context.getString(R.string.nfc_tap_not_allowed)
+        TapRefusal.ALREADY_LOCKED -> active?.let { formatAlreadyLocked(context, it) }.orEmpty()
+        TapRefusal.NFC_NOT_ALLOWED -> context.getString(R.string.nfc_tap_not_allowed, tag.name)
         TapRefusal.EARLY_UNLOCK_NOT_ALLOWED -> context.getString(R.string.nfc_tap_no_bypass)
         TapRefusal.EARLY_UNLOCK_ALREADY_RUNNING -> context.getString(R.string.nfc_tap_bypass_running)
         TapRefusal.NOT_WRITTEN -> context.getString(R.string.nfc_tap_not_written, tag.name)

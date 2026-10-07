@@ -10,7 +10,11 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationStateS
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.Presence
 import com.fabiantorrestech.lockmyphone_extended.trigger.calendar.CalendarTriggerManager
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationTriggerManager
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.PlaceRefresher
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
+import com.fabiantorrestech.lockmyphone_extended.trigger.AutomationHolds
+import com.fabiantorrestech.lockmyphone_extended.trigger.AutomationKey
+import com.fabiantorrestech.lockmyphone_extended.trigger.AutomationTester
 import com.fabiantorrestech.lockmyphone_extended.trigger.ProfileLockStarter
 import com.fabiantorrestech.lockmyphone_extended.trigger.nfc.NfcTagHandler
 import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmLearning
@@ -20,6 +24,10 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmTriggerHealt
 import com.fabiantorrestech.lockmyphone_extended.core.notify.TriggerWarningNotifier
 import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmTriggerFirer
 import com.fabiantorrestech.lockmyphone_extended.trigger.schedule.ScheduleScheduler
+import com.fabiantorrestech.lockmyphone_extended.trigger.wake.SleepPlaceChecker
+import com.fabiantorrestech.lockmyphone_extended.trigger.alarm.AlarmWatchListener
+import com.fabiantorrestech.lockmyphone_extended.trigger.wake.WakeSignalStore
+import com.fabiantorrestech.lockmyphone_extended.trigger.wake.WakeTriggerManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,6 +38,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndController
 import com.fabiantorrestech.lockmyphone_extended.core.enforce.ForegroundPolicy
 import com.fabiantorrestech.lockmyphone_extended.core.enforce.Relocker
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockController
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockEndScheduler
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockEngine
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockStateStore
@@ -37,6 +46,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.notify.LockNotifications
 import com.fabiantorrestech.lockmyphone_extended.core.oem.OemDetector
 import com.fabiantorrestech.lockmyphone_extended.core.oem.OemProfile
 import com.fabiantorrestech.lockmyphone_extended.core.oem.OemProfiles
+import com.fabiantorrestech.lockmyphone_extended.data.FontLibrary
 import com.fabiantorrestech.lockmyphone_extended.data.SettingsStore
 
 /**
@@ -57,6 +67,9 @@ class AppContainer(context: Context) {
 
     /** Credential-protected; only touch it after the user has unlocked since boot. */
     val settingsStore by lazy { SettingsStore(appContext) }
+
+    /** Font files the user added for the allowed-apps picker. */
+    val fontLibrary by lazy { FontLibrary(appContext) }
 
     val oemDetector = OemDetector(appContext)
     val foregroundLog = ForegroundLog()
@@ -80,9 +93,15 @@ class AppContainer(context: Context) {
         grayscaleController = grayscaleController,
     )
 
-    val profileLockStarter = ProfileLockStarter(lockController, appCatalog) { settingsStore }
+    /** Keeps an automation from locking while it's edited, and for a minute after it changes. */
+    val automationHolds = AutomationHolds(appContext, appScope, cooldownEnabled = { settingsStore.automationCooldown.value })
+
+    val profileLockStarter = ProfileLockStarter(lockController, appCatalog, automationHolds) { settingsStore }
 
     val nfcTagHandler = NfcTagHandler(appContext, database, lockController, profileLockStarter) { settingsStore }
+
+    /** Morning lock's last unlock and charging time. Device-protected, so it's safe to create eagerly. */
+    val wakeSignalStore = WakeSignalStore(appContext)
 
     /** Device-protected, so schedules can check "Only while at…" before the first unlock too. */
     val locationStateStore = LocationStateStore(appContext)
@@ -113,6 +132,7 @@ class AppContainer(context: Context) {
             lockStarter = profileLockStarter,
             engineChoice = { settingsStore.locationEngine.value },
             dayStartMinutes = { settingsStore.alarmDayStartMinutes.value },
+            defaultBeaconTiming = { settingsStore.defaultBeaconTiming() },
         ).also { manager ->
             // Arriving at a place can satisfy an "Only while at…" schedule or calendar trigger.
             manager.onPlaceEntered = {
@@ -122,9 +142,38 @@ class AppContainer(context: Context) {
         }
     }
 
+    /** Test now in the automation editors. */
+    val automationTester by lazy {
+        AutomationTester(
+            context = appContext,
+            locationManager = { locationTriggerManager },
+            calendarManager = { calendarTriggerManager },
+            wakeSignals = wakeSignalStore,
+            sleepPlaces = { sleepPlaceChecker },
+        ) { settingsStore.alarmDayStartMinutes.value }
+    }
+
+    /** Refresh on the lock screen, allowed apps and the notification: re-checks the place that locked. */
+    val placeRefresher by lazy { PlaceRefresher(appContext, { locationTriggerManager }, lockController, notifications) }
+
     val calendarTriggerManager by lazy {
-        CalendarTriggerManager(appContext, database, profileLockStarter) { placeId ->
+        CalendarTriggerManager(
+            context = appContext,
+            database = database,
+            lockStarter = profileLockStarter,
+            isHeld = { triggerId -> automationHolds.isHeld(AutomationKey(LockKind.CALENDAR, triggerId)) },
+        ) { placeId ->
             locationStateStore.presence(placeId) == Presence.INSIDE
+        }
+    }
+
+    /** Whether you're at one of Morning lock's sleep places (Wi-Fi first, then GPS). */
+    val sleepPlaceChecker by lazy { SleepPlaceChecker { locationTriggerManager } }
+
+    /** Morning lock: decides on unlocks and dismissed alarms. */
+    val wakeTriggerManager by lazy {
+        WakeTriggerManager(appContext, database, profileLockStarter, sleepPlaceChecker, appScope) {
+            AlarmWatchListener.instance?.isAlarmBusy() == true
         }
     }
 
@@ -144,6 +193,8 @@ class AppContainer(context: Context) {
         lockStarter = profileLockStarter,
         endScheduler = lockEndScheduler,
         dayStartMinutes = { settingsStore.alarmDayStartMinutes.value },
+        // An alarm lock firing stands Morning lock down for the day.
+        onFired = { alarmTriggerId -> wakeTriggerManager.onAlarmLockFired(alarmTriggerId) },
     )
 
     init {
@@ -154,11 +205,33 @@ class AppContainer(context: Context) {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             )
         }
-        lockController.onLockEndedEarly = {
-            appScope.launch { scheduleScheduler.suppressActiveWindow() }
+        lockController.onLockEndedEarly = { ended ->
+            // Only a schedule's own lock suppresses the rest of its window.
+            if (ended.source.kind == LockKind.SCHEDULE) appScope.launch { scheduleScheduler.suppressActiveWindow() }
         }
         lockController.nfcGateSeconds = nfcTagHandler::gateSeconds
+        // Read from device-protected storage, so the button shows before the first unlock too.
+        notifications.isRefreshable = { session ->
+            session.source.kind == LockKind.PLACE && session.source.ownerId?.let(locationStateStore::endsOnLeave) == true
+        }
+        notifications.refreshIntent = { PlaceRefresher.pendingIntent(appContext) }
+        // A changed automation's wait is over: start what's still going on (ADR 0005 still applies).
+        automationHolds.onHoldEnded = { key ->
+            when (key.kind) {
+                LockKind.SCHEDULE -> scheduleScheduler.sync()
+                LockKind.CALENDAR -> calendarTriggerManager.sync()
+                LockKind.PLACE -> locationTriggerManager.catchUp(key.id)
+                LockKind.WAKE -> wakeTriggerManager.catchUp(key.id)
+                // One-off events (an alarm, a tap, an intent) that came during the wait are dropped.
+                else -> Unit
+            }
+        }
         nfcTagHandler.watchTags(appScope)
+    }
+
+    /** An unlock heard by the accessibility service's watcher, for Morning lock. */
+    fun onUnlockHeard(previousUnlockMs: Long?, chargedMs: Long, screenOnsMs: List<Long>, nowMs: Long) {
+        appScope.launch { wakeTriggerManager.onUnlock(previousUnlockMs, chargedMs, screenOnsMs, nowMs) }
     }
 
     /**

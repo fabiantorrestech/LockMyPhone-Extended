@@ -49,6 +49,7 @@ fun RestoreConfirmDialog(
                         contents.locations.size,
                         contents.calendarTriggers.size,
                         contents.nfcTags.size,
+                        contents.beaconNames.size,
                     )
                 )
                 Text(stringResource(R.string.restore_replaces), color = MaterialTheme.colorScheme.error)

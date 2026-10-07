@@ -29,7 +29,7 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
  * @param error a message to show, e.g. a duplicate name.
  * @param isDefaults edits the Lock defaults instead of a profile: no name, icon or delete.
  * @param presetsSec one-tap lock lengths from Settings.
- * @param nfcTags the registered tags, to choose which can end this lock.
+ * @param nfcTags the registered tags, to show which are linked to this profile.
  */
 @Composable
 fun ProfileEditorScreen(
@@ -86,6 +86,7 @@ fun ProfileEditorScreen(
             settings = draft.toLockSettings(),
             presetsSec = presetsSec,
             nfcTags = nfcTags,
+            lockId = draft.id.takeIf { !isDefaults && it != 0L }?.toString(),
             lengthTitle = stringResource(R.string.profile_default_duration),
             onChange = { onDraftChange(draft.withLockSettings(it)) },
             onEditAllowedApps = onEditAllowedApps,
@@ -120,7 +121,6 @@ private fun LockProfile.toLockSettings() = LockSettings(
     grayscale = grayscale,
     resumeMode = unlockResumeMode,
     choiceSeconds = unlockChoiceSeconds,
-    nfcUnlock = nfcUnlock,
 )
 
 /** The allowed apps themselves are edited on their own screen, so only their count comes back here. */
@@ -133,8 +133,6 @@ private fun LockProfile.withLockSettings(settings: LockSettings) = copy(
     grayscale = settings.grayscale,
     unlockResumeMode = settings.resumeMode,
     unlockChoiceSeconds = settings.choiceSeconds,
-    nfcUnlockEnabled = settings.nfcUnlock.anyTag,
-    nfcUnlockTagIds = settings.nfcUnlock.tagIds,
 )
 
 private const val MAX_NAME_LENGTH = 40

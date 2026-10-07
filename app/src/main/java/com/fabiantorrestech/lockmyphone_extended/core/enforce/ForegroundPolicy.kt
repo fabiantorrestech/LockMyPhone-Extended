@@ -7,7 +7,8 @@ import com.fabiantorrestech.lockmyphone_extended.core.oem.OemProfiles
 
 /**
  * Decides which windows may be in front during an allowed-app pass without relocking:
- * core Android components, the device profile's system apps, the keyboards and this app.
+ * core Android components, the device profile's system apps, the keyboards, accessibility
+ * service overlays and this app. An accessibility app's own activities still relock.
  *
  * @param activeProfile the device profile in use (the user's choice or the detected one).
  */
@@ -24,8 +25,17 @@ class ForegroundPolicy(
         return packageName == context.packageName ||
             packageName in OemProfiles.COMMON_ALLOWED ||
             packageName in profile.alwaysAllowedPackages ||
-            packageName in oemDetector.inputMethodPackages()
+            packageName in oemDetector.inputMethodPackages() ||
+            isAccessibilityOverlay(packageName, className)
     }
+
+    /**
+     * A non-activity window from an enabled accessibility service, e.g. Grayscaler's filter drawn
+     * over a chat. It sits on top of the real app, so the user hasn't left it.
+     */
+    private fun isAccessibilityOverlay(packageName: String, className: String?): Boolean =
+        packageName in oemDetector.accessibilityServicePackages() &&
+            !oemDetector.isActivity(packageName, className)
 
     fun isLauncher(packageName: String): Boolean =
         packageName in activeProfile().launcherPackages ||

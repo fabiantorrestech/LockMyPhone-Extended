@@ -6,29 +6,42 @@ import android.content.Intent
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import com.fabiantorrestech.lockmyphone_extended.LockApp
+import com.fabiantorrestech.lockmyphone_extended.trigger.wake.WakeWatcher
 
 /**
  * Reports which app is in front, so an allowed-app pass can be enforced. It only listens for
- * window-state changes and never reads window content.
+ * window-state changes and never reads window content. While it's bound it also hosts Morning
+ * lock's [WakeWatcher], since it's the app's one component the system keeps running.
  */
 class LockAccessibilityService : AccessibilityService() {
+
+    private var wakeWatcher: WakeWatcher? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         isRunning = true
-        LockApp.container(this).lockController.updateNotifications()
+        val container = LockApp.container(this)
+        container.lockController.updateNotifications()
+        wakeWatcher = WakeWatcher(this, container.wakeSignalStore, container::onUnlockHeard).also { it.register() }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val packageName = event.packageName?.toString() ?: return
+        // TEMPORARY probe for the quick-reply design (remove before shipping).
+        android.util.Log.d(
+            "ReplyProbe",
+            "window $packageName/${event.className} keyguardLocked=${getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked}",
+        )
         LockApp.container(this).lockController.onForegroundApp(packageName, event.className?.toString())
     }
 
     override fun onInterrupt() = Unit
 
     override fun onUnbind(intent: Intent?): Boolean {
+        wakeWatcher?.unregister()
+        wakeWatcher = null
         instance = null
         isRunning = false
         LockApp.container(this).lockController.updateNotifications()

@@ -6,7 +6,6 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
-import com.fabiantorrestech.lockmyphone_extended.core.lock.NfcUnlock
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 
 /**
@@ -14,9 +13,9 @@ import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
  *
  * @param defaultDurationSec used when the trigger doesn't give its own duration.
  * @param allowedPackages apps usable during the lock. The default dialer is always added on top.
- * @param nfcUnlockEnabled any written NFC tag set to "End it, if the lock allows NFC" can end
- *   this lock. Otherwise only the tags in [nfcUnlockTagIds] can.
- * @param nfcUnlockTagIds the NFC tags (IDs as text) chosen to end this lock. Added in DB version 16.
+ * @param nfcUnlockEnabled unused: NFC tags pick their own locks since DB version 17. Kept because
+ *   SQLite on Android 11 can't drop a column without rebuilding the table.
+ * @param nfcUnlockTagIds unused since DB version 17 (added in 16), for the same reason.
  * @param dndEnabled turn Do Not Disturb on during the lock. Added in DB version 2.
  * @param dndLevel how strict that Do Not Disturb is. Added in DB version 6.
  * @param icon an emoji shown beside the profile, or null for its first letter. Added in DB version 7.
@@ -46,7 +45,6 @@ data class LockProfile(
     @ColumnInfo(defaultValue = "0") val grayscale: Boolean = false,
     @ColumnInfo(defaultValue = "") val nfcUnlockTagIds: Set<String> = emptySet(),
 ) {
-    val nfcUnlock: NfcUnlock get() = NfcUnlock(nfcUnlockEnabled, nfcUnlockTagIds)
 
     val bypassDelayMs: Long? get() = if (bypassEnabled) bypassWaitMinutes * 60_000L else null
 }

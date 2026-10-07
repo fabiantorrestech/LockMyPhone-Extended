@@ -5,6 +5,8 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import org.json.JSONArray
+import org.json.JSONObject
 
 /** What a location trigger does when you arrive or leave. */
 enum class LocationMode {
@@ -54,6 +56,57 @@ enum class BtDetection {
     NEARBY,
 }
 
+/** How a saved Wi-Fi network is recognised. */
+enum class WifiMatch {
+    /** This exact router (its BSSID): precise, but a mesh network has one per node. */
+    ROUTER,
+
+    /** Any router with this network name (SSID): covers mesh networks, but every network with that name counts, anywhere. */
+    NAME,
+}
+
+/**
+ * One Wi-Fi network a place uses. Added in DB version 23 (several per place).
+ *
+ * @param ssid the network name; null when the network hides it.
+ * @param bssid the router's address; null for a network added by name only.
+ */
+data class WifiNetwork(val ssid: String?, val bssid: String?, val matchBy: WifiMatch = WifiMatch.ROUTER) {
+    /** For lists: the name, or the router's address for a hidden network. */
+    val label: String get() = ssid ?: bssid ?: "?"
+}
+
+/** [WifiNetwork] lists as JSON, for the database and backups. An SSID can contain any character, so not a joined string. */
+object WifiNetworksJson {
+    fun write(networks: List<WifiNetwork>): String = JSONArray().apply {
+        networks.forEach { network ->
+            put(
+                JSONObject()
+                    .put("ssid", network.ssid ?: JSONObject.NULL)
+                    .put("bssid", network.bssid ?: JSONObject.NULL)
+                    .put("matchBy", network.matchBy.name)
+            )
+        }
+    }.toString()
+
+    fun read(text: String?): List<WifiNetwork> {
+        if (text.isNullOrBlank()) return emptyList()
+        val array = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
+        return (0 until array.length()).mapNotNull { i ->
+            val o = array.optJSONObject(i) ?: return@mapNotNull null
+            WifiNetwork(
+                ssid = if (o.isNull("ssid")) null else o.optString("ssid"),
+                bssid = if (o.isNull("bssid")) null else o.optString("bssid"),
+                matchBy = WifiMatch.entries.firstOrNull { it.name == o.optString("matchBy") } ?: WifiMatch.ROUTER,
+            )
+        }
+    }
+
+    /** The one network a place had before DB version 23, if any. */
+    fun legacy(bssid: String?, ssid: String?): List<WifiNetwork> =
+        if (bssid == null) emptyList() else listOf(WifiNetwork(ssid, bssid, WifiMatch.ROUTER))
+}
+
 /**
  * How GPS and Wi-Fi combined in DB versions 11–12. Replaced by [LocationTrigger.signals] and
  * [LocationTrigger.requireAll]; kept only because the column still exists.
@@ -74,8 +127,11 @@ enum class LocationMatch {
  * (its BSSID), which is exact to a building or room. Added in DB version 10.
  *
  * @param radiusMeters the circle's radius, 25–2000 m.
- * @param wifiBssid when set, you only count as "here" while connected to this router.
- * @param wifiSsid the router's network name, for display only.
+ * @param wifiBssid legacy (before DB version 23): the one router; replaced by [wifiNetworks].
+ * @param wifiSsid legacy, with [wifiBssid].
+ * @param wifiNetworks the Wi-Fi signal's networks: connected to any one of them = here.
+ * @param beaconBoostWifiNetworks the "Listen harder" Wi-Fi zone's networks (ZONES): connected to,
+ *   or in range of, any one of them. [beaconBoostWifiBssid] / [beaconBoostWifiSsid] are legacy.
  * @param profileId the lock to start; null = Quick lock.
  * @param activeRule which days it's active on; shared with alarm triggers. Not used by
  *   [LocationMode.TIME_SLOTS], whose slots have their own days.
@@ -84,6 +140,19 @@ enum class LocationMatch {
  * @param requireAll true = every signal must say "here"; false = any one is enough.
  * @param beaconKey the beacon to watch, as [com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconRules] keys it.
  * @param beaconRssiThreshold "near" means a smoothed signal at or above this (dBm), set by calibrating.
+ * @param beaconAddress the beacon's Bluetooth address, when picked as one beacon with all its
+ *   formats (ADR 0006); null for places picked before DB version 20.
+ * @param beaconOneMeterDbm the beacon's signal 1 m away (announced by it, or measured), for
+ *   distance estimates and the "Near means" guide; null = unknown (a typical -59 is assumed).
+ * @param beaconPreset how quickly the beacon (or nearby device) reacts: a
+ *   [com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconPreset] name, or null for
+ *   the default in Settings. With CUSTOM, [beaconArriveSec], [beaconLeaveSec],
+ *   [beaconRecheckSec] and [beaconScanSpeed] are its numbers. Added in DB version 21.
+ * @param beaconBoost when the beacon scan listens harder before the beacon is heard: a
+ *   [com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconBoost] name, null = AUTO
+ *   (its own Wi-Fi / GPS / charger signals). With ZONES, [beaconBoostZones] (BoostZone names)
+ *   and, for the Wi-Fi zone, [beaconBoostWifiBssid]. The GPS zone uses [latitude] /
+ *   [longitude] / [radiusMeters]. Added in DB version 22.
  * @param chargerMode which chargers count for [PlaceSignal.CHARGER].
  * @param btAddress the paired device for [PlaceSignal.BT_DEVICE]; [btName] is for display only.
  * @param btDetection connected to it, or near it; [btRssiThreshold] is "near" for the latter.
@@ -132,6 +201,19 @@ data class LocationTrigger(
     val btName: String? = null,
     @ColumnInfo(defaultValue = "CONNECTED") val btDetection: BtDetection = BtDetection.CONNECTED,
     @ColumnInfo(defaultValue = "-75") val btRssiThreshold: Int = DEFAULT_BEACON_THRESHOLD,
+    val beaconAddress: String? = null,
+    val beaconOneMeterDbm: Int? = null,
+    val beaconPreset: String? = null,
+    val beaconArriveSec: Int? = null,
+    val beaconLeaveSec: Int? = null,
+    val beaconRecheckSec: Int? = null,
+    val beaconScanSpeed: String? = null,
+    val beaconBoost: String? = null,
+    @ColumnInfo(defaultValue = "") val beaconBoostZones: Set<String> = emptySet(),
+    val beaconBoostWifiBssid: String? = null,
+    val beaconBoostWifiSsid: String? = null,
+    @ColumnInfo(defaultValue = "[]") val wifiNetworks: List<WifiNetwork> = emptyList(),
+    @ColumnInfo(defaultValue = "[]") val beaconBoostWifiNetworks: List<WifiNetwork> = emptyList(),
 ) {
     val signalSet: Set<PlaceSignal> get() = PlaceSignal.entries.filter { it.name in signals }.toSet()
 
@@ -141,7 +223,7 @@ data class LocationTrigger(
     val usesGps: Boolean get() = uses(PlaceSignal.GPS)
 
     /** Whether the Wi-Fi network takes part in deciding "here". */
-    val usesWifi: Boolean get() = uses(PlaceSignal.WIFI) && wifiBssid != null
+    val usesWifi: Boolean get() = uses(PlaceSignal.WIFI) && wifiNetworks.isNotEmpty()
 
     val usesBeacon: Boolean get() = uses(PlaceSignal.BEACON) && beaconKey != null
 

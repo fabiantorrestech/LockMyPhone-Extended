@@ -20,7 +20,23 @@ import com.fabiantorrestech.lockmyphone_extended.core.enforce.Relocker
 import com.fabiantorrestech.lockmyphone_extended.core.notify.LockNotifications
 import com.fabiantorrestech.lockmyphone_extended.core.service.LockForegroundService
 
-enum class StartResult { STARTED, ADMIN_NOT_ACTIVE }
+/** What happened when a lock was asked to start. */
+sealed interface StartResult {
+    data object Started : StartResult
+
+    /** It replaced [previous], a weaker lock. */
+    data class Replaced(val previous: LockSession) : StartResult
+
+    /** [running], an equal or stronger lock, stays; nothing changed. */
+    data class Refused(val running: LockSession) : StartResult
+    data object AdminNotActive : StartResult
+
+    /**
+     * The automation starting it is held: its editor is open, or it changed less than a minute
+     * ago ([untilMs], or null while it's being edited). Nothing changed.
+     */
+    data class Held(val untilMs: Long?) : StartResult
+}
 
 /**
  * Connects [LockEngine]'s rules to the Android side: storage, the end alarm, the foreground
@@ -45,11 +61,11 @@ class LockController(
     val state get() = store.state
 
     /**
-     * Called when a lock ends before its scheduled end: an intent stop, a completed early
-     * unlock, or an NFC end tag. The schedule uses it so it doesn't recreate the lock
-     * for the rest of the same window.
+     * Called with the lock that ended before its scheduled end: an intent stop, a completed early
+     * unlock, or an NFC end tag. The schedule uses it so it doesn't recreate its own lock for the
+     * rest of the same window.
      */
-    var onLockEndedEarly: (() -> Unit)? = null
+    var onLockEndedEarly: ((LockSession) -> Unit)? = null
 
     /** Opens the countdown screen (MainActivity). Set by the app container, so this class stays UI-free. */
     var onShowLockScreen: (() -> Unit)? = null
@@ -112,7 +128,7 @@ class LockController(
      *   an allowed app.
      * @param unlockChoiceSeconds how long the countdown screen waits with
      *   [UnlockResumeMode.SHOW_LOCK_SCREEN].
-     * @param nfcUnlock which NFC tags set to "End it, if the lock allows NFC" can end this lock.
+     * @param source what started it; its kind decides whether it may replace a running lock.
      */
     fun startLock(
         durationMs: Long,
@@ -124,11 +140,11 @@ class LockController(
         grayscale: Boolean,
         resumeMode: UnlockResumeMode,
         unlockChoiceSeconds: Int,
-        nfcUnlock: NfcUnlock,
+        source: LockSource,
     ): StartResult {
-        if (!relocker.isAdminActive()) return StartResult.ADMIN_NOT_ACTIVE
+        if (!relocker.isAdminActive()) return StartResult.AdminNotActive
 
-        val newState = engine.start(
+        val decision = engine.start(
             current = store.current,
             nowMs = clock(),
             durationMs = durationMs,
@@ -140,18 +156,36 @@ class LockController(
             grayscale = grayscale,
             resumeMode = resumeMode,
             unlockChoiceSeconds = unlockChoiceSeconds,
-            nfcUnlock = nfcUnlock,
+            source = source,
         )
+        val (newState, previous) = when (decision) {
+            is StartDecision.Refused -> {
+                Log.i(TAG, "${source.kind} lock refused: a ${decision.running.source.kind} lock is running")
+                return StartResult.Refused(decision.running)
+            }
+            is StartDecision.Started -> decision.state to null
+            is StartDecision.Replaced -> decision.state to decision.previous
+        }
+        // A replaced lock's pass, gate or "locking again" countdown is over.
+        mainHandler.removeCallbacks(pendingRelock)
+        cancelLockScreenChoice()
         store.save(newState)
-        val session = (newState as LockState.Locked).session
+        val session = newState.session
         endScheduler.schedule(session.effectiveEndMs)
-        if (session.dndEnabled) dndController.enable(session.dndLevel)
+        when {
+            session.dndEnabled -> dndController.enable(session.dndLevel)
+            previous?.dndEnabled == true -> dndController.disable()
+        }
         // Only once, at the start: if the user turns grayscale off mid-lock, it stays off.
-        if (grayscale) grayscaleController.enable()
+        when {
+            grayscale -> grayscaleController.enable()
+            previous?.grayscale == true -> grayscaleController.disable()
+        }
         startService()
         updateNotifications()
         relocker.lockNow()
-        return StartResult.STARTED
+        if (previous != null) Log.i(TAG, "${source.kind} lock replaced a ${previous.source.kind} lock")
+        return if (previous != null) StartResult.Replaced(previous) else StartResult.Started
     }
 
     /** Starts the early-unlock countdown (from the lock-screen notification). */
@@ -394,7 +428,7 @@ class LockController(
         dndController.disable()
         grayscaleController.disable()
         context.stopService(Intent(context, LockForegroundService::class.java))
-        if (endedEarly) onLockEndedEarly?.invoke()
+        if (endedEarly) onLockEndedEarly?.invoke((current as LockState.Locked).session)
     }
 
     private fun isKeyguardLocked(): Boolean =

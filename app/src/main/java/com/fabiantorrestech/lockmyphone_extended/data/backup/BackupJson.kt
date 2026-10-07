@@ -1,10 +1,12 @@
 package com.fabiantorrestech.lockmyphone_extended.data.backup
 
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
-import com.fabiantorrestech.lockmyphone_extended.core.lock.NfcUnlock
+import com.fabiantorrestech.lockmyphone_extended.core.lock.QUICK_LOCK_ID
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 import com.fabiantorrestech.lockmyphone_extended.data.BypassDefaults
+import com.fabiantorrestech.lockmyphone_extended.data.FontChoice
 import com.fabiantorrestech.lockmyphone_extended.data.LockDefaults
+import com.fabiantorrestech.lockmyphone_extended.data.PickerStyle
 import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmActiveRule
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmMatchMode
@@ -12,6 +14,8 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTriggerKind
 import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarLengthMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
+import com.fabiantorrestech.lockmyphone_extended.data.db.WakeTrigger
+import com.fabiantorrestech.lockmyphone_extended.data.db.BeaconName
 import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
 import com.fabiantorrestech.lockmyphone_extended.data.db.ChargerMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMatch
@@ -22,10 +26,14 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockSchedule
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcDuringLock
+import com.fabiantorrestech.lockmyphone_extended.data.db.NfcLinkMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTagAction
+import com.fabiantorrestech.lockmyphone_extended.data.db.WifiNetworksJson
 import com.fabiantorrestech.lockmyphone_extended.trigger.calendar.DeviceCalendar
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.LocationEngineChoice
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconPreset
+import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconTiming
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -39,11 +47,12 @@ data class SettingsSnapshot(
     val quickGrayscale: Boolean,
     val quickResumeMode: UnlockResumeMode,
     val quickChoiceSeconds: Int,
-    val quickNfcUnlock: NfcUnlock,
     val lockDefaults: LockDefaults,
     val durationPresetsSec: List<Long>,
     val themeMode: ThemeMode,
     val showAppIcons: Boolean,
+    /** An added font's file isn't in the backup; without it the font falls back to the default. */
+    val pickerStyle: PickerStyle,
     val alarmDayStartMinutes: Int,
     val locationEngine: LocationEngineChoice,
     val calendarSkipDeclined: Boolean,
@@ -51,6 +60,9 @@ data class SettingsSnapshot(
     val oemProfileId: String?,
     val intentStopEnabled: Boolean,
     val nfcGateSeconds: Int,
+    val automationCooldown: Boolean,
+    val beaconPreset: BeaconPreset,
+    val beaconCustomTiming: BeaconTiming,
 )
 
 /** Everything a backup file holds. */
@@ -68,6 +80,10 @@ data class BackupContents(
     /** The calendars the calendar triggers point at, so they can be found again by account + name. */
     val calendars: List<DeviceCalendar>,
     val nfcTags: List<NfcTag>,
+    /** Added with DB version 19; older backups have none. */
+    val beaconNames: List<BeaconName>,
+    /** Morning locks; added with DB version 24, older backups have none. */
+    val wakeTriggers: List<WakeTrigger> = emptyList(),
 )
 
 /**
@@ -93,6 +109,8 @@ object BackupJson {
         put("calendarTriggers", array(contents.calendarTriggers, ::calendarToJson))
         put("calendars", array(contents.calendars) { JSONObject().put("id", it.id).put("name", it.name).put("account", it.account) })
         put("nfcTags", array(contents.nfcTags, ::nfcTagToJson))
+        put("beaconNames", array(contents.beaconNames) { JSONObject().put("key", it.key).put("name", it.name) })
+        put("wakeTriggers", array(contents.wakeTriggers, ::wakeToJson))
     }.toString(2)
 
     /** @throws IllegalArgumentException if [text] isn't a backup from this app. */
@@ -114,6 +132,8 @@ object BackupJson {
             calendarTriggers = list(root, "calendarTriggers", ::calendarFromJson),
             calendars = list(root, "calendars") { DeviceCalendar(it.getLong("id"), it.optString("name"), it.optString("account")) },
             nfcTags = list(root, "nfcTags", ::nfcTagFromJson),
+            beaconNames = list(root, "beaconNames") { BeaconName(it.getString("key"), it.getString("name")) },
+            wakeTriggers = list(root, "wakeTriggers", ::wakeFromJson),
         )
     }
 
@@ -129,8 +149,6 @@ object BackupJson {
         put("quickGrayscale", s.quickGrayscale)
         put("quickResumeMode", s.quickResumeMode.name)
         put("quickChoiceSeconds", s.quickChoiceSeconds)
-        put("quickNfcUnlock", s.quickNfcUnlock.anyTag)
-        put("quickNfcUnlockTags", strings(s.quickNfcUnlock.tagIds))
         put("lockDefaults", JSONObject().apply {
             val d = s.lockDefaults
             put("durationSec", d.durationSec)
@@ -142,12 +160,14 @@ object BackupJson {
             put("grayscale", d.grayscale)
             put("resumeMode", d.resumeMode.name)
             put("choiceSeconds", d.unlockChoiceSeconds)
-            put("nfcUnlock", d.nfcUnlock.anyTag)
-            put("nfcUnlockTags", strings(d.nfcUnlock.tagIds))
         })
         put("durationPresetsSec", JSONArray(s.durationPresetsSec))
         put("themeMode", s.themeMode.name)
         put("showAppIcons", s.showAppIcons)
+        put("pickerClockSp", s.pickerStyle.clockSizeSp)
+        put("pickerAppNameSp", s.pickerStyle.appNameSizeSp)
+        put("pickerFont", s.pickerStyle.font.id)
+        put("pickerHideStatusBar", s.pickerStyle.hideStatusBar)
         put("alarmDayStartMinutes", s.alarmDayStartMinutes)
         put("locationEngine", s.locationEngine.name)
         put("calendarSkipDeclined", s.calendarSkipDeclined)
@@ -155,6 +175,12 @@ object BackupJson {
         put("oemProfileId", s.oemProfileId ?: JSONObject.NULL)
         put("intentStopEnabled", s.intentStopEnabled)
         put("nfcGateSeconds", s.nfcGateSeconds)
+        put("automationCooldown", s.automationCooldown)
+        put("beaconPreset", s.beaconPreset.name)
+        put("beaconCustomArriveSec", s.beaconCustomTiming.arriveMs / 1_000)
+        put("beaconCustomLeaveSec", s.beaconCustomTiming.leaveMs / 1_000)
+        put("beaconCustomRecheckSec", s.beaconCustomTiming.recheckMs / 1_000)
+        put("beaconCustomScanSpeed", s.beaconCustomTiming.scanSpeed.name)
     }
 
     private fun settingsFromJson(o: JSONObject): SettingsSnapshot {
@@ -168,7 +194,6 @@ object BackupJson {
             quickGrayscale = o.optBoolean("quickGrayscale"),
             quickResumeMode = enumOr(o.optString("quickResumeMode"), UnlockResumeMode.RESUME_APP),
             quickChoiceSeconds = o.optInt("quickChoiceSeconds", 3),
-            quickNfcUnlock = NfcUnlock(o.optBoolean("quickNfcUnlock"), stringSet(o, "quickNfcUnlockTags")),
             lockDefaults = LockDefaults(
                 durationSec = d.optLong("durationSec", 60L * 60),
                 allowedPackages = stringSet(d, "allowedPackages"),
@@ -178,11 +203,16 @@ object BackupJson {
                 grayscale = d.optBoolean("grayscale"),
                 resumeMode = enumOr(d.optString("resumeMode"), UnlockResumeMode.RESUME_APP),
                 unlockChoiceSeconds = d.optInt("choiceSeconds", 3),
-                nfcUnlock = NfcUnlock(d.optBoolean("nfcUnlock"), stringSet(d, "nfcUnlockTags")),
             ),
             durationPresetsSec = o.optJSONArray("durationPresetsSec")?.let { a -> (0 until a.length()).map { a.getLong(it) } } ?: emptyList(),
             themeMode = enumOr(o.optString("themeMode"), ThemeMode.SYSTEM),
             showAppIcons = o.optBoolean("showAppIcons", true),
+            pickerStyle = PickerStyle(
+                clockSizeSp = o.optInt("pickerClockSp", PickerStyle.DEFAULT_CLOCK_SIZE_SP),
+                appNameSizeSp = o.optInt("pickerAppNameSp", PickerStyle.DEFAULT_APP_NAME_SIZE_SP),
+                font = FontChoice.fromId(o.optStringOrNull("pickerFont")),
+                hideStatusBar = o.optBoolean("pickerHideStatusBar", true),
+            ).clamped(),
             alarmDayStartMinutes = o.optInt("alarmDayStartMinutes", 120),
             locationEngine = enumOr(o.optString("locationEngine"), LocationEngineChoice.PLAY_SERVICES),
             calendarSkipDeclined = o.optBoolean("calendarSkipDeclined", true),
@@ -190,6 +220,14 @@ object BackupJson {
             oemProfileId = o.optStringOrNull("oemProfileId"),
             intentStopEnabled = o.optBoolean("intentStopEnabled"),
             nfcGateSeconds = o.optInt("nfcGateSeconds", 10),
+            automationCooldown = o.optBoolean("automationCooldown", true),
+            beaconPreset = enumOr(o.optString("beaconPreset"), BeaconPreset.BALANCED),
+            beaconCustomTiming = BeaconTiming(
+                arriveMs = o.optLong("beaconCustomArriveSec", BeaconTiming.BALANCED.arriveMs / 1_000) * 1_000,
+                leaveMs = o.optLong("beaconCustomLeaveSec", BeaconTiming.BALANCED.leaveMs / 1_000) * 1_000,
+                recheckMs = o.optLong("beaconCustomRecheckSec", BeaconTiming.BALANCED.recheckMs / 1_000) * 1_000,
+                scanSpeed = enumOr(o.optString("beaconCustomScanSpeed"), BeaconTiming.BALANCED.scanSpeed),
+            ).clamped(),
         )
     }
 
@@ -202,7 +240,6 @@ object BackupJson {
         put("dndEnabled", p.dndEnabled); put("dndLevel", p.dndLevel.name); put("grayscale", p.grayscale)
         put("unlockResumeMode", p.unlockResumeMode.name); put("unlockChoiceSeconds", p.unlockChoiceSeconds)
         put("icon", p.icon ?: JSONObject.NULL); put("sortOrder", p.sortOrder)
-        put("nfcUnlockTagIds", strings(p.nfcUnlockTagIds))
     }
 
     private fun profileFromJson(o: JSONObject) = LockProfile(
@@ -213,7 +250,7 @@ object BackupJson {
         grayscale = o.optBoolean("grayscale"),
         unlockResumeMode = enumOr(o.optString("unlockResumeMode"), UnlockResumeMode.RESUME_APP),
         unlockChoiceSeconds = o.optInt("unlockChoiceSeconds", 3), icon = o.optStringOrNull("icon"),
-        sortOrder = o.optInt("sortOrder"), nfcUnlockTagIds = stringSet(o, "nfcUnlockTagIds"),
+        sortOrder = o.optInt("sortOrder"),
     )
 
     private fun scheduleToJson(s: LockSchedule) = JSONObject().apply {
@@ -264,6 +301,14 @@ object BackupJson {
         put("beaconRssiThreshold", l.beaconRssiThreshold); put("chargerMode", l.chargerMode.name)
         put("btAddress", l.btAddress ?: JSONObject.NULL); put("btName", l.btName ?: JSONObject.NULL)
         put("btDetection", l.btDetection.name); put("btRssiThreshold", l.btRssiThreshold)
+        put("beaconAddress", l.beaconAddress ?: JSONObject.NULL); put("beaconOneMeterDbm", l.beaconOneMeterDbm ?: JSONObject.NULL)
+        put("beaconPreset", l.beaconPreset ?: JSONObject.NULL); put("beaconArriveSec", l.beaconArriveSec ?: JSONObject.NULL)
+        put("beaconLeaveSec", l.beaconLeaveSec ?: JSONObject.NULL); put("beaconRecheckSec", l.beaconRecheckSec ?: JSONObject.NULL)
+        put("beaconScanSpeed", l.beaconScanSpeed ?: JSONObject.NULL)
+        put("beaconBoost", l.beaconBoost ?: JSONObject.NULL); put("beaconBoostZones", strings(l.beaconBoostZones))
+        put("beaconBoostWifiBssid", l.beaconBoostWifiBssid ?: JSONObject.NULL); put("beaconBoostWifiSsid", l.beaconBoostWifiSsid ?: JSONObject.NULL)
+        put("wifiNetworks", JSONArray(WifiNetworksJson.write(l.wifiNetworks)))
+        put("beaconBoostWifiNetworks", JSONArray(WifiNetworksJson.write(l.beaconBoostWifiNetworks)))
     }
 
     private fun locationFromJson(o: JSONObject) = LocationTrigger(
@@ -283,6 +328,17 @@ object BackupJson {
         btAddress = o.optStringOrNull("btAddress"), btName = o.optStringOrNull("btName"),
         btDetection = enumOr(o.optString("btDetection"), BtDetection.CONNECTED),
         btRssiThreshold = o.optInt("btRssiThreshold", LocationTrigger.DEFAULT_BEACON_THRESHOLD),
+        beaconAddress = o.optStringOrNull("beaconAddress"), beaconOneMeterDbm = o.optIntOrNull("beaconOneMeterDbm"),
+        beaconPreset = o.optStringOrNull("beaconPreset"), beaconArriveSec = o.optIntOrNull("beaconArriveSec"),
+        beaconLeaveSec = o.optIntOrNull("beaconLeaveSec"), beaconRecheckSec = o.optIntOrNull("beaconRecheckSec"),
+        beaconScanSpeed = o.optStringOrNull("beaconScanSpeed"),
+        beaconBoost = o.optStringOrNull("beaconBoost"), beaconBoostZones = stringSet(o, "beaconBoostZones"),
+        beaconBoostWifiBssid = o.optStringOrNull("beaconBoostWifiBssid"), beaconBoostWifiSsid = o.optStringOrNull("beaconBoostWifiSsid"),
+        // Backups from before DB version 23 had one router each.
+        wifiNetworks = o.optJSONArray("wifiNetworks")?.let { WifiNetworksJson.read(it.toString()) }
+            ?: WifiNetworksJson.legacy(o.optStringOrNull("wifiBssid"), o.optStringOrNull("wifiSsid")),
+        beaconBoostWifiNetworks = o.optJSONArray("beaconBoostWifiNetworks")?.let { WifiNetworksJson.read(it.toString()) }
+            ?: WifiNetworksJson.legacy(o.optStringOrNull("beaconBoostWifiBssid"), o.optStringOrNull("beaconBoostWifiSsid")),
     )
 
     /** Backups from before signals existed: derive them from the old match mode. */
@@ -322,21 +378,61 @@ object BackupJson {
         requiredPlaceId = o.optLongOrNull("requiredPlaceId"),
     )
 
+    private fun wakeToJson(w: WakeTrigger) = JSONObject().apply {
+        put("id", w.id); put("name", w.name); put("icon", w.icon ?: JSONObject.NULL); put("enabled", w.enabled)
+        put("sortOrder", w.sortOrder); put("profileId", w.profileId ?: JSONObject.NULL); put("lockMinutes", w.lockMinutes)
+        put("windowStartMin", w.windowStartMin); put("windowEndMin", w.windowEndMin); put("daysMask", w.daysMask)
+        put("alarmFirst", w.alarmFirst); put("alarmPackages", strings(w.alarmPackages))
+        put("minSleepMinutes", w.minSleepMinutes); put("sleepPlaceIds", strings(w.sleepPlaceIds.map { it.toString() }.toSet()))
+        put("checkCharging", w.checkCharging); put("chargingMinutes", w.chargingMinutes); put("checkPlace", w.checkPlace)
+        put("lastFiredDay", w.lastFiredDay ?: JSONObject.NULL)
+        put("yieldToAlarms", w.yieldToAlarms); put("yieldAlarmIds", strings(w.yieldAlarmIds.map { it.toString() }.toSet()))
+        put("countFromScreenOn", w.countFromScreenOn); put("altEndMin", w.altEndMin ?: JSONObject.NULL)
+        put("altDaysMask", w.altDaysMask); put("lateCheck", w.lateCheck); put("lateCheckAfterMin", w.lateCheckAfterMin)
+    }
+
+    private fun wakeFromJson(o: JSONObject) = WakeTrigger(
+        id = o.getLong("id"), name = o.getString("name"), icon = o.optStringOrNull("icon"), enabled = o.optBoolean("enabled", true),
+        sortOrder = o.optInt("sortOrder"), profileId = o.optLongOrNull("profileId"),
+        lockMinutes = o.optInt("lockMinutes", WakeTrigger.DEFAULT_LOCK_MINUTES),
+        windowStartMin = o.optInt("windowStartMin", WakeTrigger.DEFAULT_WINDOW_START),
+        windowEndMin = o.optInt("windowEndMin", WakeTrigger.DEFAULT_WINDOW_END),
+        daysMask = o.optInt("daysMask", LockSchedule.EVERY_DAY),
+        alarmFirst = o.optBoolean("alarmFirst", true), alarmPackages = stringSet(o, "alarmPackages"),
+        minSleepMinutes = o.optInt("minSleepMinutes", WakeTrigger.DEFAULT_MIN_SLEEP_MINUTES),
+        sleepPlaceIds = stringSet(o, "sleepPlaceIds").mapNotNull { it.toLongOrNull() }.toSet(),
+        checkCharging = o.optBoolean("checkCharging", true),
+        chargingMinutes = o.optInt("chargingMinutes", WakeTrigger.DEFAULT_CHARGING_MINUTES),
+        checkPlace = o.optBoolean("checkPlace", true), lastFiredDay = o.optStringOrNull("lastFiredDay"),
+        yieldToAlarms = o.optBoolean("yieldToAlarms", true),
+        yieldAlarmIds = stringSet(o, "yieldAlarmIds").mapNotNull { it.toLongOrNull() }.toSet(),
+        countFromScreenOn = o.optBoolean("countFromScreenOn", true),
+        altEndMin = if (o.isNull("altEndMin")) null else o.optInt("altEndMin"),
+        altDaysMask = o.optInt("altDaysMask", 0), lateCheck = o.optBoolean("lateCheck", false),
+        lateCheckAfterMin = o.optInt("lateCheckAfterMin", WakeTrigger.DEFAULT_LATE_CHECK_AFTER),
+    )
+
     private fun nfcTagToJson(t: NfcTag) = JSONObject().apply {
         put("id", t.id); put("name", t.name); put("icon", t.icon ?: JSONObject.NULL); put("uid", t.uid)
-        put("action", t.action.name); put("duringLock", t.duringLock.name); put("profileId", t.profileId ?: JSONObject.NULL)
+        put("action", t.action.name); put("duringLock", t.duringLock.name)
+        put("linkMode", t.linkMode.name); put("linkedLockIds", strings(t.linkedLockIds))
         put("durationSec", t.durationSec ?: JSONObject.NULL); put("enabled", t.enabled); put("sortOrder", t.sortOrder)
         // Included so restored tags still end locks without being written again.
         put("secret", t.secret ?: JSONObject.NULL)
+        put("takeOver", t.takeOver)
     }
 
     private fun nfcTagFromJson(o: JSONObject) = NfcTag(
         id = o.getLong("id"), name = o.getString("name"), icon = o.optStringOrNull("icon"), uid = o.getString("uid"),
         action = enumOr(o.optString("action"), NfcTagAction.TOGGLE),
         duringLock = enumOr(o.optString("duringLock"), NfcDuringLock.START_BYPASS_WAIT),
-        profileId = o.optLongOrNull("profileId"), durationSec = o.optLongOrNull("durationSec"),
+        linkMode = enumOr(o.optString("linkMode"), NfcLinkMode.ONE),
+        // Backups from before links (DB version 17) name one profile, or none for Quick lock.
+        linkedLockIds = if (o.has("linkedLockIds")) stringSet(o, "linkedLockIds") else setOf(o.optLongOrNull("profileId")?.toString() ?: QUICK_LOCK_ID),
+        durationSec = o.optLongOrNull("durationSec"),
         enabled = o.optBoolean("enabled", true), sortOrder = o.optInt("sortOrder"),
         secret = o.optStringOrNull("secret"),
+        takeOver = o.optBoolean("takeOver"),
     )
 
     // ---- helpers ----

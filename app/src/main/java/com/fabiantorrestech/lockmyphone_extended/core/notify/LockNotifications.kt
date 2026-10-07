@@ -29,6 +29,20 @@ class LockNotifications(
     private val notificationManager = context.getSystemService(NotificationManager::class.java)
 
     /**
+     * Whether this lock gets a Refresh button: it was started by a place that unlocks when you
+     * leave. Set by the app container, so this class stays free of the location code.
+     */
+    var isRefreshable: (LockSession) -> Boolean = { false }
+
+    /** Where Refresh sends its tap. Set by the app container. */
+    var refreshIntent: (() -> PendingIntent)? = null
+
+    /** The last Refresh's progress or result, shown as the text of the lock it was run for. */
+    data class RefreshNote(val lockStartedAtMs: Long, val text: String)
+
+    @Volatile var refreshNote: RefreshNote? = null
+
+    /**
      * The channel is IMPORTANCE_DEFAULT with no sound or vibration. By default Android hides
      * silent (IMPORTANCE_LOW) notifications on the lock screen, and the lock screen is exactly
      * where this one must be seen.
@@ -52,7 +66,9 @@ class LockNotifications(
     /**
      * The ongoing lock notification. The system updates its countdown timer by itself.
      * - It's colorized, which Android ranks at the top for a foreground service.
-     * - Buttons (at most three): Phone, Allowed apps… and the early-unlock button.
+     * - Buttons (at most three): Phone, Allowed apps… and the early-unlock button. A lock started
+     *   by a place that unlocks when you leave shows Phone, early unlock and Refresh instead
+     *   (tapping the notification still opens the allowed apps).
      * - Tapping it opens the allowed-apps picker.
      *
      * @param passesAvailable false while the accessibility service isn't bound. Allowed apps
@@ -66,7 +82,13 @@ class LockNotifications(
         } else {
             context.getString(R.string.notif_status_title, endTime)
         }
-        val text = if (passesAvailable) session.label else context.getString(R.string.notif_passes_unavailable)
+        val refreshable = isRefreshable(session)
+        val note = refreshNote?.takeIf { refreshable && it.lockStartedAtMs == session.startedAtMs }?.text
+        val text = when {
+            !passesAvailable -> context.getString(R.string.notif_passes_unavailable)
+            note != null -> "${session.label} · $note"
+            else -> session.label
+        }
         val builder = NotificationCompat.Builder(context, CHANNEL_STATUS)
             .setSmallIcon(R.drawable.ic_stat_lock)
             .setContentTitle(title)
@@ -93,7 +115,8 @@ class LockNotifications(
                 activityIntent(REQUEST_DIAL, PassActivity.dialIntent(context)),
             )
             val dialer = appCatalog.defaultDialerPackage()
-            if (session.allowedPackages.any { it != dialer }) {
+            // With Refresh, this slot goes to Refresh: tapping the notification opens the same list.
+            if (!refreshable && session.allowedPackages.any { it != dialer }) {
                 builder.addAction(
                     0,
                     context.getString(R.string.notif_action_allowed_apps),
@@ -114,10 +137,18 @@ class LockNotifications(
                 .setShortCriticalText(context.getString(R.string.notif_bypass_chip))
             delayMs != null -> builder.addAction(
                 lockScreenAction(
-                    context.getString(R.string.notif_action_request_bypass, formatWait(delayMs)),
+                    if (delayMs == 0L) {
+                        context.getString(R.string.notif_action_unlock_now)
+                    } else {
+                        context.getString(R.string.notif_action_request_bypass, formatWait(delayMs))
+                    },
                     BypassActionReceiver.requestIntent(context),
                 )
             )
+        }
+        val refresh = refreshIntent
+        if (refreshable && refresh != null) {
+            builder.addAction(lockScreenAction(context.getString(R.string.notif_action_refresh), refresh()))
         }
         return builder.build()
     }

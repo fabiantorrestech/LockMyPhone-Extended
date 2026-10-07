@@ -41,6 +41,20 @@ class AlarmWatchListener : NotificationListenerService() {
     /** Ringing notifications we're tracking: notification key → the triggers it matched. */
     private val ringing = mutableMapOf<String, List<AlarmTrigger>>()
 
+    /** The alarm apps Morning lock follows, kept current from the database. */
+    @Volatile
+    private var wakePackages: Set<String> = emptySet()
+
+    /** Ringing alarms Morning lock is waiting on: notification key → the alarm app. */
+    private val ringingWake = mutableMapOf<String, String>()
+
+    /** Removed alarms still waiting to see whether they were snoozed. */
+    @Volatile
+    private var confirming = 0
+
+    /** An alarm is ringing, or a dismissal is still being confirmed: Morning lock lets it settle first. */
+    fun isAlarmBusy(): Boolean = ringing.isNotEmpty() || ringingWake.isNotEmpty() || confirming > 0
+
     /** When each watched app last posted a (non-ringing) notification. */
     private val lastPostMs = mutableMapOf<String, Long>()
 
@@ -53,6 +67,11 @@ class AlarmWatchListener : NotificationListenerService() {
         scope = newScope
         newScope.launch {
             container.database.alarmTriggerDao().observeEnabled().collect { triggers = it }
+        }
+        newScope.launch {
+            container.database.wakeTriggerDao().observeEnabled().collect {
+                wakePackages = container.wakeTriggerManager.alarmPackages(it)
+            }
         }
         Log.i(TAG, "Connected")
     }
@@ -68,7 +87,7 @@ class AlarmWatchListener : NotificationListenerService() {
         val packageName = sbn.packageName
         recordQrAlarmTime(sbn)?.let { onQrAlarmUpcomingPosted(packageName, it) }
         val learningFor = container.alarmLearning.waitingFor()
-        val watched = packageName == learningFor || triggers.any { it.watches(packageName) }
+        val watched = packageName == learningFor || triggers.any { it.watches(packageName) } || packageName in wakePackages
         if (!watched) return
 
         if (!isRingingAlarm(sbn.notification)) {
@@ -87,6 +106,7 @@ class AlarmWatchListener : NotificationListenerService() {
             container.alarmLearning.onRingingAlarm(fingerprint)
             Log.i(TAG, "Ringing notification from $packageName while learning (id ${fingerprint.notificationId}, alarm=${AlarmKinds.isAlarm(fingerprint)})")
         }
+        if (packageName in wakePackages && AlarmKinds.isAlarm(fingerprint)) ringingWake[sbn.key] = packageName
         val matched = triggers.filter { it.matchesRinging(fingerprint) }
         if (matched.isNotEmpty()) {
             ringing[sbn.key] = matched
@@ -139,17 +159,24 @@ class AlarmWatchListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         onQrAlarmUpcomingRemoved(sbn)
-        val matched = ringing.remove(sbn.key) ?: return
+        val matched = ringing.remove(sbn.key).orEmpty()
+        val wakePackage = ringingWake.remove(sbn.key)
+        if (matched.isEmpty() && wakePackage == null) return
         val removedAtMs = System.currentTimeMillis()
+        confirming++
         val packageName = sbn.packageName
         // Wait to see whether the app posts a snooze / upcoming / missed notification.
         handler.postDelayed({
+            confirming--
             val postedNearby = lastPostMs[packageName]?.let { it >= removedAtMs - QUIET_BEFORE_MS } ?: false
             if (postedNearby) {
                 Log.i(TAG, "Alarm from $packageName removed, but the app posted again (snooze/missed); no lock")
                 return@postDelayed
             }
-            scope?.launch { matched.forEach { container.alarmTriggerFirer.onDismissed(it) } }
+            scope?.launch {
+                matched.forEach { container.alarmTriggerFirer.onDismissed(it) }
+                wakePackage?.let { container.wakeTriggerManager.onAlarmDismissed(it) }
+            }
         }, QUIET_AFTER_MS)
     }
 
