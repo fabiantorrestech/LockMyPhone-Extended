@@ -257,6 +257,7 @@ Send a **broadcast** explicitly to package `com.fabiantorrestech.lockmyphone_ext
 | `com.fabiantorrestech.lockmyphone_extended.action.START_LOCK` | `profile` (a profile name; without it, Quick lock is used), plus optionally `duration_min` or `duration_sec`. It replaces a running manual lock; any other running lock refuses it. |
 | `com.fabiantorrestech.lockmyphone_extended.action.STOP_LOCK` | `token`: the secret shown in **Settings → Intent API**. Only works when "Allow stopping a lock by intent" is on. |
 | `com.fabiantorrestech.lockmyphone_extended.action.SYNC_PROFILE` | Only from apps signed with this app's key (permission `…permission.MANAGE_PROFILES`, ADR 0008): `manager`, `name`, `allowed` and `hidden` (string arrays). Used by Accountabilibuddy. Install LockMyPhone-Extended first; an app installed before it doesn't get the permission until it's reinstalled. |
+| `content://com.fabiantorrestech.lockmyphone_extended.profiles/profiles` (query) | Same permission (ADR 0009). Read-only: one row per profile with `name` and `managedBy`. Used by Accountabilibuddy's profile picker. |
 
 Example (adb):
 ```sh

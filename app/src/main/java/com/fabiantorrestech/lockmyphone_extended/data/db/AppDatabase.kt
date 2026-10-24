@@ -1,6 +1,7 @@
 package com.fabiantorrestech.lockmyphone_extended.data.db
 
 import android.content.Context
+import android.database.Cursor
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Delete
@@ -49,6 +50,10 @@ interface ProfileDao {
     /** The profile [manager] keeps in sync (ADR 0008), if any. */
     @Query("SELECT * FROM profiles WHERE managedBy = :manager LIMIT 1")
     suspend fun getManagedBy(manager: String): LockProfile?
+
+    /** Names only, for a companion app's profile picker (ADR 0009). */
+    @Query("SELECT name, managedBy FROM profiles ORDER BY sortOrder, id")
+    fun profileNames(): Cursor
 
     @Query("SELECT COUNT(*) FROM profiles")
     suspend fun count(): Int
