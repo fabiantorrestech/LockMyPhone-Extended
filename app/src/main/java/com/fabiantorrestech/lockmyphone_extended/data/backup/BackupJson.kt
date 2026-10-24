@@ -9,6 +9,7 @@ import com.fabiantorrestech.lockmyphone_extended.data.FontChoice
 import com.fabiantorrestech.lockmyphone_extended.data.LockDefaults
 import com.fabiantorrestech.lockmyphone_extended.data.PickerStyle
 import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
+import com.fabiantorrestech.lockmyphone_extended.data.UiMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmActiveRule
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmMatchMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTrigger
@@ -67,6 +68,8 @@ data class SettingsSnapshot(
     val automationCooldown: Boolean,
     val beaconPreset: BeaconPreset,
     val beaconCustomTiming: BeaconTiming,
+    val uiMode: UiMode = UiMode.SIMPLE,
+    val popupPackages: Set<String> = emptySet(),
 )
 
 /** Everything a backup file holds. */
@@ -191,6 +194,8 @@ object BackupJson {
         put("beaconCustomLeaveSec", s.beaconCustomTiming.leaveMs / 1_000)
         put("beaconCustomRecheckSec", s.beaconCustomTiming.recheckMs / 1_000)
         put("beaconCustomScanSpeed", s.beaconCustomTiming.scanSpeed.name)
+        put("uiMode", s.uiMode.name)
+        put("popupPackages", strings(s.popupPackages))
     }
 
     private fun settingsFromJson(o: JSONObject): SettingsSnapshot {
@@ -245,6 +250,9 @@ object BackupJson {
                 recheckMs = o.optLong("beaconCustomRecheckSec", BeaconTiming.BALANCED.recheckMs / 1_000) * 1_000,
                 scanSpeed = enumOr(o.optString("beaconCustomScanSpeed"), BeaconTiming.BALANCED.scanSpeed),
             ).clamped(),
+            // Backups from before 0.10.0: Simple mode, no popup apps.
+            uiMode = enumOr(o.optString("uiMode"), UiMode.SIMPLE),
+            popupPackages = stringSet(o, "popupPackages"),
         )
     }
 

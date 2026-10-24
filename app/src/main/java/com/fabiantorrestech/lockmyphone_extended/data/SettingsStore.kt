@@ -22,6 +22,12 @@ import java.security.SecureRandom
 /** The app's colour theme. OLED is dark with pure-black backgrounds. */
 enum class ThemeMode { SYSTEM, LIGHT, DARK, OLED }
 
+/**
+ * How much of the app is shown. Simple shows what most people need, with sensible defaults; Pro
+ * shows every fine-grained control. Only the UI reads it: locks behave the same in both.
+ */
+enum class UiMode { SIMPLE, PRO }
+
 /** Settings that aren't in a backup (the backup itself, and this device's beacon mode); changing them doesn't need a new backup. */
 val BACKUP_SETTING_KEYS = setOf(
     "backup_folder_uri", "auto_backup_folder_uri", "auto_backup_enabled", "last_backup_at",
@@ -121,6 +127,19 @@ class SettingsStore(context: Context) {
     fun setThemeMode(mode: ThemeMode) {
         prefs.edit { putString(KEY_THEME_MODE, mode.name) }
         _themeMode.value = mode
+    }
+
+    /** Simple by default, for new and existing installs alike; Pro is one switch away in Settings. */
+    private val _uiMode = MutableStateFlow(
+        prefs.getString(KEY_UI_MODE, null)
+            ?.let { saved -> UiMode.entries.firstOrNull { it.name == saved } }
+            ?: UiMode.SIMPLE
+    )
+    val uiMode: StateFlow<UiMode> = _uiMode.asStateFlow()
+
+    fun setUiMode(mode: UiMode) {
+        prefs.edit { putString(KEY_UI_MODE, mode.name) }
+        _uiMode.value = mode
     }
 
     /** Clock size, app-name size and font of the allowed-apps picker and the lock countdown. */
@@ -330,6 +349,8 @@ class SettingsStore(context: Context) {
         automationCooldown = automationCooldown.value,
         beaconPreset = beaconPreset.value,
         beaconCustomTiming = beaconCustomTiming.value,
+        uiMode = uiMode.value,
+        popupPackages = popupPackages.value,
     )
 
     fun restore(s: SettingsSnapshot) {
@@ -357,6 +378,8 @@ class SettingsStore(context: Context) {
         setAssistantPopupAllowed(s.assistantPopupAllowed)
         setHomeAction(s.homeAction)
         setUnlockIntoAllowedApp(s.unlockIntoAllowedApp)
+        setUiMode(s.uiMode)
+        setPopupPackages(s.popupPackages)
     }
 
     /** "Act as a beacon": this device broadcasts a beacon other phones can use as a place. */
@@ -555,6 +578,18 @@ class SettingsStore(context: Context) {
         _unlockIntoAllowedApp.value = allowed
     }
 
+    /**
+     * During a lock: apps whose popups (dialogs, bubbles, overlays; not their screens) may show over
+     * an allowed app, e.g. a password manager's autofill or a chat bubble. Empty by default (Pro).
+     */
+    private val _popupPackages = MutableStateFlow(prefs.getStringSet(KEY_POPUP_PACKAGES, null)?.toSet() ?: emptySet())
+    val popupPackages: StateFlow<Set<String>> = _popupPackages.asStateFlow()
+
+    fun setPopupPackages(packages: Set<String>) {
+        prefs.edit { putStringSet(KEY_POPUP_PACKAGES, packages) }
+        _popupPackages.value = packages
+    }
+
     /** True once the camera was added (hidden) to every allowed-apps list (AppContainer.seedCameraOnce). */
     val cameraSeeded: Boolean get() = prefs.getBoolean(KEY_CAMERA_SEEDED, false)
 
@@ -660,6 +695,8 @@ class SettingsStore(context: Context) {
         const val KEY_DEFAULT_CHOICE_SECONDS = "default_choice_seconds"
         const val KEY_SHOW_APP_ICONS = "show_app_icons"
         const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_UI_MODE = "ui_mode"
+        const val KEY_POPUP_PACKAGES = "popup_packages"
         const val KEY_PICKER_CLOCK_SP = "picker_clock_sp"
         const val KEY_PICKER_APP_NAME_SP = "picker_app_name_sp"
         const val KEY_PICKER_FONT = "picker_font"

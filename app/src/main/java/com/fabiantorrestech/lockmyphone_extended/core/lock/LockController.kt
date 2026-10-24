@@ -418,6 +418,7 @@ class LockController(
             packageName,
             className,
             allowAssistantPopup = session?.assistantPopupAllowed == true,
+            popupPackages = session?.popupPackages.orEmpty(),
         )
         // System components (keyguard, shade, keyboards) sit on top of the real app, so they
         // don't count. This app does: its picker and countdown screen are pass screens.

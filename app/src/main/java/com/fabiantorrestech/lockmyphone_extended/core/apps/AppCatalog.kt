@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.AlarmClock
 import android.provider.MediaStore
+import android.provider.Telephony
 import android.provider.Settings
 import android.telecom.TelecomManager
 import android.util.LruCache
@@ -122,6 +124,26 @@ class AppCatalog(private val context: Context) : AppIconProvider {
             ?.packageName
             // "android" means several cameras and no default (the chooser would be shown).
             ?.takeIf { it != "android" }
+
+    /** The default SMS app (Messages), or null if there's none. */
+    fun defaultSmsPackage(): String? = Telephony.Sms.getDefaultSmsPackage(context)
+
+    /** The app that shows alarms (Clock), or null. */
+    fun clockPackage(): String? = resolvedPackage(Intent(AlarmClock.ACTION_SHOW_ALARMS))
+
+    /**
+     * The default app for an Android app category (e.g. [Intent.CATEGORY_APP_MUSIC]), or null when
+     * there's none or several without a default.
+     */
+    fun categoryApp(category: String): String? =
+        resolvedPackage(Intent(Intent.ACTION_MAIN).addCategory(category))
+
+    private fun resolvedPackage(intent: Intent): String? =
+        packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo
+            ?.packageName
+            // "android" means several apps and no default (the chooser would be shown).
+            ?.takeIf { it != "android" && it != context.packageName }
 
     /** Opens the dialer keypad. */
     fun dialIntent(): Intent =

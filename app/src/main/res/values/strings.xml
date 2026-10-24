@@ -1124,4 +1124,14 @@
     <string name="test_verdict_on_leave_away">You\'re away: it locks the next time you leave.</string>
     <string name="test_verdict_alarm_ready">✅ Ready: dismissing its alarm would lock.</string>
     <string name="test_verdict_nfc_ready">✅ Ready: tapping the tag would start its lock.</string>
+
+    <!-- 0.10.0: starter profiles (setup assistant) -->
+    <string name="situation_sleep">Sleep</string>
+    <string name="situation_sleep_desc">Wind down and stay off the phone until morning. Do Not Disturb on.</string>
+    <string name="situation_focus">Focus</string>
+    <string name="situation_focus_desc">50 minutes of deep work. Music and your calendar stay usable.</string>
+    <string name="situation_study">Study</string>
+    <string name="situation_study_desc">90 minutes with a calculator, music and your calendar. No early unlock.</string>
+    <string name="situation_family">Family time</string>
+    <string name="situation_family_desc">2 hours of dinner, family or friends. Do Not Disturb on.</string>
 </resources>

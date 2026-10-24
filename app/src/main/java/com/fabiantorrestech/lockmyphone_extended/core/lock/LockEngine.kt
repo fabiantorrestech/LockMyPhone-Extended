@@ -108,6 +108,7 @@ class LockEngine {
                 assistantPopupAllowed = options.assistantPopupAllowed,
                 homeAction = options.homeAction,
                 unlockIntoAllowedApp = options.unlockIntoAllowedApp,
+                popupPackages = options.popupPackages,
             )
         )
         // A lock whose time is up counts as over, even before its end alarm has run.

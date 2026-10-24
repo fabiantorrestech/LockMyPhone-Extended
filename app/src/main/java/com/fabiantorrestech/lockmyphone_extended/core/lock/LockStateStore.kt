@@ -49,6 +49,7 @@ class LockStateStore(context: Context) {
                     putBoolean(KEY_ASSISTANT_POPUP, state.session.assistantPopupAllowed)
                     putString(KEY_HOME_ACTION, state.session.homeAction.name)
                     putBoolean(KEY_UNLOCK_INTO_ALLOWED_APP, state.session.unlockIntoAllowedApp)
+                    putStringSet(KEY_POPUP_PACKAGES, state.session.popupPackages)
                 }
             }
         }
@@ -85,6 +86,8 @@ class LockStateStore(context: Context) {
                     ?.let { saved -> HomeAction.entries.firstOrNull { it.name == saved } }
                     ?: HomeAction.LOCK,
                 unlockIntoAllowedApp = prefs.getBoolean(KEY_UNLOCK_INTO_ALLOWED_APP, true),
+                // Locks saved before 0.10.0 have none.
+                popupPackages = prefs.getStringSet(KEY_POPUP_PACKAGES, null)?.toSet() ?: emptySet(),
             )
         )
     }
@@ -132,5 +135,6 @@ class LockStateStore(context: Context) {
         const val KEY_ASSISTANT_POPUP = "assistant_popup"
         const val KEY_HOME_ACTION = "home_action"
         const val KEY_UNLOCK_INTO_ALLOWED_APP = "unlock_into_allowed_app"
+        const val KEY_POPUP_PACKAGES = "popup_packages"
     }
 }

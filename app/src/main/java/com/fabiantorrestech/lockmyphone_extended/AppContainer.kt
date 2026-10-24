@@ -48,7 +48,9 @@ import com.fabiantorrestech.lockmyphone_extended.core.notify.LockNotifications
 import com.fabiantorrestech.lockmyphone_extended.core.oem.OemDetector
 import com.fabiantorrestech.lockmyphone_extended.core.oem.OemProfile
 import com.fabiantorrestech.lockmyphone_extended.core.oem.OemProfiles
+import com.fabiantorrestech.lockmyphone_extended.data.EssentialApps
 import com.fabiantorrestech.lockmyphone_extended.data.FontLibrary
+import com.fabiantorrestech.lockmyphone_extended.data.StarterProfileInstaller
 import com.fabiantorrestech.lockmyphone_extended.pass.PassActivity
 import com.fabiantorrestech.lockmyphone_extended.data.SettingsStore
 
@@ -70,6 +72,13 @@ class AppContainer(context: Context) {
 
     /** Credential-protected; only touch it after the user has unlocked since boot. */
     val settingsStore by lazy { SettingsStore(appContext) }
+
+    /** The setup assistant's starter profiles and bedtime schedule. Credential-protected, like [settingsStore]. */
+    val starterProfileInstaller by lazy {
+        StarterProfileInstaller(database, EssentialApps(appCatalog), settingsStore) { situation ->
+            appContext.getString(situation.nameRes)
+        }
+    }
 
     /** Font files the user added for the allowed-apps picker. */
     val fontLibrary by lazy { FontLibrary(appContext) }
@@ -314,6 +323,7 @@ class AppContainer(context: Context) {
             assistantPopupAllowed = settingsStore.assistantPopupAllowed.value,
             homeAction = settingsStore.homeAction.value,
             unlockIntoAllowedApp = settingsStore.unlockIntoAllowedApp.value,
+            popupPackages = settingsStore.popupPackages.value,
         )
     }
 

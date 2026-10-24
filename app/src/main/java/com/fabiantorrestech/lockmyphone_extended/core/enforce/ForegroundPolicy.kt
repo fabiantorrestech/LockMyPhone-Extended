@@ -22,8 +22,15 @@ class ForegroundPolicy(
      * @param allowAssistantPopup the lock allows the Gemini / Assistant popup: its activity, and
      *   the Google app's non-activity windows (the popup's dialogs). The Google app's other
      *   activities (Search, Discover) still relock.
+     * @param popupPackages apps the user allowed popups from: their non-activity windows pass, their
+     *   activities still relock.
      */
-    fun isAlwaysAllowed(packageName: String, className: String?, allowAssistantPopup: Boolean = false): Boolean {
+    fun isAlwaysAllowed(
+        packageName: String,
+        className: String?,
+        allowAssistantPopup: Boolean = false,
+        popupPackages: Set<String> = emptySet(),
+    ): Boolean {
         val profile = activeProfile()
         // An app switcher hosted inside an allowed package (e.g. SystemUI recents) still relocks.
         if (className != null && className in profile.recentsClassNames) return false
@@ -32,7 +39,8 @@ class ForegroundPolicy(
             packageName in profile.alwaysAllowedPackages ||
             packageName in oemDetector.inputMethodPackages() ||
             isAccessibilityOverlay(packageName, className) ||
-            (allowAssistantPopup && isAssistantPopup(packageName, className))
+            (allowAssistantPopup && isAssistantPopup(packageName, className)) ||
+            (packageName in popupPackages && !oemDetector.isActivity(packageName, className))
     }
 
     private fun isAssistantPopup(packageName: String, className: String?): Boolean =

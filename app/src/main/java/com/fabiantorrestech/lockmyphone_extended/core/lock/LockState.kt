@@ -31,6 +31,7 @@ data class GlobalLockOptions(
     val assistantPopupAllowed: Boolean = false,
     val homeAction: HomeAction = HomeAction.ALLOWED_APPS,
     val unlockIntoAllowedApp: Boolean = true,
+    val popupPackages: Set<String> = emptySet(),
 )
 
 /**
@@ -59,6 +60,8 @@ data class GlobalLockOptions(
  * @param homeAction what Home does during a pass. Locks saved before M24 read [HomeAction.LOCK].
  * @param unlockIntoAllowedApp an unlock that lands on an allowed app (or this app's screens) grants
  *   a pass instead of relocking, e.g. after tapping an allowed app's notification on the lock screen.
+ * @param popupPackages apps whose non-activity windows (popups, bubbles, overlays) may show over an
+ *   allowed app. Their own screens still relock.
  */
 data class LockSession(
     val label: String,
@@ -79,6 +82,7 @@ data class LockSession(
     val assistantPopupAllowed: Boolean = false,
     val homeAction: HomeAction = HomeAction.LOCK,
     val unlockIntoAllowedApp: Boolean = true,
+    val popupPackages: Set<String> = emptySet(),
 ) {
     val bypassAllowed: Boolean get() = bypassDelayMs != null
     val bypassPending: Boolean get() = bypassEndsAtMs != null
