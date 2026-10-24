@@ -3,6 +3,8 @@ package com.fabiantorrestech.lockmyphone_extended.core.apps
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.MediaStore
 import android.provider.Settings
 import android.telecom.TelecomManager
 import android.util.LruCache
@@ -112,11 +114,31 @@ class AppCatalog(private val context: Context) : AppIconProvider {
     fun defaultDialerPackage(): String? =
         context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage
 
+    /** The app that takes a photo for other apps ("take a photo" in WhatsApp), or null if there's none. */
+    fun defaultCameraPackage(): String? =
+        context.packageManager
+            .resolveActivity(Intent(MediaStore.ACTION_IMAGE_CAPTURE), PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo
+            ?.packageName
+            // "android" means several cameras and no default (the chooser would be shown).
+            ?.takeIf { it != "android" }
+
     /** Opens the dialer keypad. */
     fun dialIntent(): Intent =
         Intent(Intent.ACTION_DIAL)
             .setPackage(defaultDialerPackage())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /** The App info page for [packageName] in Settings (Force stop, Uninstall, permissions…). */
+    fun appInfoIntent(packageName: String): Intent =
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
+
+    /** The package that shows App info pages (Settings on most phones), or null if none does. */
+    fun appInfoPackage(): String? =
+        context.packageManager
+            .resolveActivity(appInfoIntent(context.packageName), PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo
+            ?.packageName
 
     private companion object {
         /** About 44 KB per 40 dp icon on a Pixel 7, so the worst case is about 13 MB. */

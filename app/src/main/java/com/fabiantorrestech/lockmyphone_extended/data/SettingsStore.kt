@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Base64
 import androidx.core.content.edit
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
+import com.fabiantorrestech.lockmyphone_extended.core.lock.HomeAction
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 import com.fabiantorrestech.lockmyphone_extended.data.backup.SettingsSnapshot
@@ -25,6 +26,7 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK, OLED }
 val BACKUP_SETTING_KEYS = setOf(
     "backup_folder_uri", "auto_backup_folder_uri", "auto_backup_enabled", "last_backup_at",
     "beacon_mode_enabled", "beacon_mode_start", "beacon_mode_end", "beacon_mode_id",
+    "camera_seeded",
 )
 
 /** How many one-tap lock lengths the user can keep. */
@@ -47,12 +49,15 @@ data class LockDefaults(
     val grayscale: Boolean,
     val resumeMode: UnlockResumeMode,
     val unlockChoiceSeconds: Int,
+    /** Allowed apps not shown in the lock-screen list (e.g. the camera). */
+    val hiddenPackages: Set<String> = emptySet(),
 ) {
     /** A new, unsaved profile pre-filled with these values. The editor uses it for Defaults too. */
     fun toProfileDraft(name: String = ""): LockProfile = LockProfile(
         name = name,
         defaultDurationSec = durationSec,
         allowedPackages = allowedPackages,
+        hiddenPackages = hiddenPackages,
         bypassEnabled = bypass.enabled,
         bypassWaitMinutes = bypass.waitMinutes,
         dndEnabled = dndEnabled,
@@ -72,6 +77,7 @@ data class LockDefaults(
             grayscale = profile.grayscale,
             resumeMode = profile.unlockResumeMode,
             unlockChoiceSeconds = profile.unlockChoiceSeconds,
+            hiddenPackages = profile.hiddenPackages,
         )
     }
 }
@@ -124,6 +130,7 @@ class SettingsStore(context: Context) {
             appNameSizeSp = prefs.getInt(KEY_PICKER_APP_NAME_SP, PickerStyle.DEFAULT_APP_NAME_SIZE_SP),
             font = FontChoice.fromId(prefs.getString(KEY_PICKER_FONT, null)),
             hideStatusBar = prefs.getBoolean(KEY_PICKER_HIDE_STATUS_BAR, true),
+            showTimeLeft = prefs.getBoolean(KEY_PICKER_SHOW_TIME_LEFT, true),
         ).clamped()
     )
     val pickerStyle: StateFlow<PickerStyle> = _pickerStyle.asStateFlow()
@@ -135,6 +142,7 @@ class SettingsStore(context: Context) {
             putInt(KEY_PICKER_APP_NAME_SP, clamped.appNameSizeSp)
             putString(KEY_PICKER_FONT, clamped.font.id)
             putBoolean(KEY_PICKER_HIDE_STATUS_BAR, clamped.hideStatusBar)
+            putBoolean(KEY_PICKER_SHOW_TIME_LEFT, clamped.showTimeLeft)
         }
         _pickerStyle.value = clamped
     }
@@ -297,6 +305,10 @@ class SettingsStore(context: Context) {
     fun snapshot() = SettingsSnapshot(
         quickDurationSec = quickDurationSec.value,
         quickAllowedPackages = allowedPackages.value,
+        quickHiddenPackages = quickHiddenPackages.value,
+        assistantPopupAllowed = assistantPopupAllowed.value,
+        homeAction = homeAction.value,
+        unlockIntoAllowedApp = unlockIntoAllowedApp.value,
         quickBypass = bypassDefaults.value,
         quickDndEnabled = quickDndEnabled.value,
         quickDndLevel = quickDndLevel.value,
@@ -323,6 +335,7 @@ class SettingsStore(context: Context) {
     fun restore(s: SettingsSnapshot) {
         setQuickDurationSec(s.quickDurationSec)
         setAllowedPackages(s.quickAllowedPackages)
+        setQuickHiddenPackages(s.quickHiddenPackages)
         setBypassDefaults(s.quickBypass)
         setQuickDndEnabled(s.quickDndEnabled)
         setQuickDndLevel(s.quickDndLevel)
@@ -341,6 +354,9 @@ class SettingsStore(context: Context) {
         setNfcGateSeconds(s.nfcGateSeconds)
         setAutomationCooldown(s.automationCooldown)
         setBeaconTiming(s.beaconPreset, s.beaconCustomTiming)
+        setAssistantPopupAllowed(s.assistantPopupAllowed)
+        setHomeAction(s.homeAction)
+        setUnlockIntoAllowedApp(s.unlockIntoAllowedApp)
     }
 
     /** "Act as a beacon": this device broadcasts a beacon other phones can use as a place. */
@@ -407,6 +423,7 @@ class SettingsStore(context: Context) {
         prefs.edit {
             putLong(KEY_DEFAULT_DURATION_SEC, defaults.durationSec)
             putStringSet(KEY_DEFAULT_ALLOWED_PACKAGES, defaults.allowedPackages)
+            putStringSet(KEY_DEFAULT_HIDDEN_PACKAGES, defaults.hiddenPackages)
             putBoolean(KEY_DEFAULT_BYPASS_ENABLED, defaults.bypass.enabled)
             putInt(KEY_DEFAULT_BYPASS_MINUTES, defaults.bypass.waitMinutes)
             putBoolean(KEY_DEFAULT_DND, defaults.dndEnabled)
@@ -423,6 +440,7 @@ class SettingsStore(context: Context) {
         val defaults = _lockDefaults.value
         setQuickDurationSec(defaults.durationSec)
         setAllowedPackages(defaults.allowedPackages)
+        setQuickHiddenPackages(defaults.hiddenPackages)
         setBypassDefaults(defaults.bypass)
         setQuickDndEnabled(defaults.dndEnabled)
         setQuickDndLevel(defaults.dndLevel)
@@ -495,6 +513,55 @@ class SettingsStore(context: Context) {
         _allowedPackages.value = packages
     }
 
+    /** Quick lock's allowed apps that aren't shown in the lock-screen list (e.g. the camera). */
+    private val _quickHiddenPackages = MutableStateFlow(
+        prefs.getStringSet(KEY_QUICK_HIDDEN_PACKAGES, null)?.toSet() ?: _lockDefaults.value.hiddenPackages
+    )
+    val quickHiddenPackages: StateFlow<Set<String>> = _quickHiddenPackages.asStateFlow()
+
+    fun setQuickHiddenPackages(packages: Set<String>) {
+        prefs.edit { putStringSet(KEY_QUICK_HIDDEN_PACKAGES, packages) }
+        _quickHiddenPackages.value = packages
+    }
+
+    /** During a lock: the Gemini / Assistant popup may open in an allowed app. Off by default. */
+    private val _assistantPopupAllowed = MutableStateFlow(prefs.getBoolean(KEY_ASSISTANT_POPUP, false))
+    val assistantPopupAllowed: StateFlow<Boolean> = _assistantPopupAllowed.asStateFlow()
+
+    fun setAssistantPopupAllowed(allowed: Boolean) {
+        prefs.edit { putBoolean(KEY_ASSISTANT_POPUP, allowed) }
+        _assistantPopupAllowed.value = allowed
+    }
+
+    /** During a lock: what Home does. Opens the allowed apps by default. */
+    private val _homeAction = MutableStateFlow(
+        prefs.getString(KEY_HOME_ACTION, null)
+            ?.let { saved -> HomeAction.entries.firstOrNull { it.name == saved } }
+            ?: HomeAction.ALLOWED_APPS
+    )
+    val homeAction: StateFlow<HomeAction> = _homeAction.asStateFlow()
+
+    fun setHomeAction(action: HomeAction) {
+        prefs.edit { putString(KEY_HOME_ACTION, action.name) }
+        _homeAction.value = action
+    }
+
+    /** During a lock: unlocking onto an allowed app keeps it open instead of relocking. On by default. */
+    private val _unlockIntoAllowedApp = MutableStateFlow(prefs.getBoolean(KEY_UNLOCK_INTO_ALLOWED_APP, true))
+    val unlockIntoAllowedApp: StateFlow<Boolean> = _unlockIntoAllowedApp.asStateFlow()
+
+    fun setUnlockIntoAllowedApp(allowed: Boolean) {
+        prefs.edit { putBoolean(KEY_UNLOCK_INTO_ALLOWED_APP, allowed) }
+        _unlockIntoAllowedApp.value = allowed
+    }
+
+    /** True once the camera was added (hidden) to every allowed-apps list (AppContainer.seedCameraOnce). */
+    val cameraSeeded: Boolean get() = prefs.getBoolean(KEY_CAMERA_SEEDED, false)
+
+    fun setCameraSeeded() {
+        prefs.edit { putBoolean(KEY_CAMERA_SEEDED, true) }
+    }
+
     fun setOemProfileId(id: String?) {
         prefs.edit { putString(KEY_OEM_PROFILE, id) }
         _oemProfileId.value = id
@@ -512,6 +579,7 @@ class SettingsStore(context: Context) {
     private fun readLockDefaults() = LockDefaults(
         durationSec = prefs.getLong(KEY_DEFAULT_DURATION_SEC, DEFAULT_DURATION_SEC),
         allowedPackages = prefs.getStringSet(KEY_DEFAULT_ALLOWED_PACKAGES, null)?.toSet() ?: emptySet(),
+        hiddenPackages = prefs.getStringSet(KEY_DEFAULT_HIDDEN_PACKAGES, null)?.toSet() ?: emptySet(),
         bypass = BypassDefaults(
             enabled = prefs.getBoolean(KEY_DEFAULT_BYPASS_ENABLED, true),
             waitMinutes = prefs.getInt(KEY_DEFAULT_BYPASS_MINUTES, DEFAULT_BYPASS_MINUTES),
@@ -579,6 +647,12 @@ class SettingsStore(context: Context) {
         const val KEY_DEFAULT_DURATION_SEC = "default_duration_sec"
         const val DEFAULT_DURATION_SEC = 60L * 60
         const val KEY_DEFAULT_ALLOWED_PACKAGES = "default_allowed_packages"
+        const val KEY_DEFAULT_HIDDEN_PACKAGES = "default_hidden_packages"
+        const val KEY_QUICK_HIDDEN_PACKAGES = "quick_hidden_packages"
+        const val KEY_ASSISTANT_POPUP = "assistant_popup"
+        const val KEY_HOME_ACTION = "home_action"
+        const val KEY_UNLOCK_INTO_ALLOWED_APP = "unlock_into_allowed_app"
+        const val KEY_CAMERA_SEEDED = "camera_seeded"
         const val KEY_DEFAULT_BYPASS_ENABLED = "default_bypass_enabled"
         const val KEY_DEFAULT_BYPASS_MINUTES = "default_bypass_minutes"
         const val KEY_DEFAULT_DND = "default_dnd_enabled"
@@ -590,5 +664,6 @@ class SettingsStore(context: Context) {
         const val KEY_PICKER_APP_NAME_SP = "picker_app_name_sp"
         const val KEY_PICKER_FONT = "picker_font"
         const val KEY_PICKER_HIDE_STATUS_BAR = "picker_hide_status_bar"
+        const val KEY_PICKER_SHOW_TIME_LEFT = "picker_show_time_left"
     }
 }

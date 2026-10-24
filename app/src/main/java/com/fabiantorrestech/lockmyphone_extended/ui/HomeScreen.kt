@@ -36,7 +36,11 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.WakeTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
 import com.fabiantorrestech.lockmyphone_extended.data.db.NfcLinkMode
 import androidx.compose.ui.draw.alpha
+import com.fabiantorrestech.lockmyphone_extended.core.lock.HomeAction
 import com.fabiantorrestech.lockmyphone_extended.core.lock.QUICK_LOCK_ID
+import androidx.compose.material.icons.filled.Assistant
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.BatteryAlert
@@ -179,6 +183,12 @@ fun HomeScreen(
     showPickerIcons: Boolean,
     onShowPickerIconsChange: (Boolean) -> Unit,
     pickerAppearance: PickerAppearance,
+    assistantPopupAllowed: Boolean,
+    onAssistantPopupChange: (Boolean) -> Unit,
+    homeAction: HomeAction,
+    onHomeActionChange: (HomeAction) -> Unit,
+    unlockIntoAllowedApp: Boolean,
+    onUnlockIntoAllowedAppChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxSize()) {
@@ -273,6 +283,14 @@ fun HomeScreen(
                         if (setup.hasNfc) NfcGateCard(nfcGateSeconds, onNfcGateSecondsChange)
                         IntentApiCard(intentApi, intentApiActions)
                         DeviceCard(deviceProfileName, onChangeDevice)
+                        DuringLockCard(
+                            assistantPopupAllowed,
+                            onAssistantPopupChange,
+                            homeAction,
+                            onHomeActionChange,
+                            unlockIntoAllowedApp,
+                            onUnlockIntoAllowedAppChange,
+                        )
                         AppearanceCard(themeMode, onThemeModeChange, showPickerIcons, onShowPickerIconsChange, pickerAppearance)
                         OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.diag_open))
@@ -1121,6 +1139,67 @@ private fun SetupRow(label: String, done: Boolean, onFix: () -> Unit) {
             Text(stringResource(R.string.setup_row_enable, label))
         }
     }
+}
+
+/** Global rules for every lock: what Home does during a pass, the assistant popup, and unlocking into an allowed app. */
+@Composable
+private fun DuringLockCard(
+    assistantPopupAllowed: Boolean,
+    onAssistantPopupChange: (Boolean) -> Unit,
+    homeAction: HomeAction,
+    onHomeActionChange: (HomeAction) -> Unit,
+    unlockIntoAllowedApp: Boolean,
+    onUnlockIntoAllowedAppChange: (Boolean) -> Unit,
+) {
+    var choosingHome by remember { mutableStateOf(false) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Text(
+                stringResource(R.string.during_lock_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            SettingsRow(
+                icon = Icons.Filled.Home,
+                title = stringResource(R.string.home_action_title),
+                summary = stringResource(homeActionLabel(homeAction)),
+                onClick = { choosingHome = true },
+            )
+            SwitchSettingsRow(
+                icon = Icons.Filled.Assistant,
+                title = stringResource(R.string.assistant_popup_title),
+                summary = stringResource(R.string.assistant_popup_hint),
+                checked = assistantPopupAllowed,
+                onCheckedChange = onAssistantPopupChange,
+            )
+            SwitchSettingsRow(
+                icon = Icons.Filled.LockOpen,
+                title = stringResource(R.string.unlock_into_allowed_title),
+                summary = stringResource(R.string.unlock_into_allowed_hint),
+                checked = unlockIntoAllowedApp,
+                onCheckedChange = onUnlockIntoAllowedAppChange,
+            )
+        }
+    }
+    if (choosingHome) {
+        ChoiceDialog(
+            title = stringResource(R.string.home_action_title),
+            options = HomeAction.entries,
+            selected = homeAction,
+            label = { stringResource(homeActionLabel(it)) },
+            onSelect = {
+                onHomeActionChange(it)
+                choosingHome = false
+            },
+            onDismiss = { choosingHome = false },
+        )
+    }
+}
+
+private fun homeActionLabel(action: HomeAction): Int = when (action) {
+    HomeAction.ALLOWED_APPS -> R.string.home_action_allowed_apps
+    HomeAction.COUNTDOWN -> R.string.home_action_countdown
+    HomeAction.LOCK -> R.string.home_action_lock
 }
 
 /** Theme (System / Light / Dark / OLED black), and icons, clock, sizes and font of the lock-screen app picker. */

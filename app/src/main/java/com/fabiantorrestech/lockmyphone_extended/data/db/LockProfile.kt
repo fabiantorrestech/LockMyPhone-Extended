@@ -25,6 +25,8 @@ import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
  *   in an allowed app. Added in DB version 5.
  * @param unlockChoiceSeconds how long the countdown screen waits for a pick with
  *   [UnlockResumeMode.SHOW_LOCK_SCREEN]. Added in DB version 5.
+ * @param hiddenPackages allowed apps not shown in the lock-screen list (e.g. the camera); a subset
+ *   of [allowedPackages]. Added in DB version 26.
  */
 @Entity(tableName = "profiles", indices = [Index(value = ["name"], unique = true)])
 data class LockProfile(
@@ -44,6 +46,7 @@ data class LockProfile(
     @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0,
     @ColumnInfo(defaultValue = "0") val grayscale: Boolean = false,
     @ColumnInfo(defaultValue = "") val nfcUnlockTagIds: Set<String> = emptySet(),
+    @ColumnInfo(defaultValue = "") val hiddenPackages: Set<String> = emptySet(),
 ) {
 
     val bypassDelayMs: Long? get() = if (bypassEnabled) bypassWaitMinutes * 60_000L else null

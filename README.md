@@ -28,12 +28,18 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
 ### The lock
 - **Locks again on every unlock** during a lock, like Lock My Phone. The lock survives reboots and app updates, because the end time is stored as a wall-clock timestamp.
 - **Quick lock:** set the length (H:M:S or one-tap presets), allowed apps and options on the Quick lock tab, then tap **▶ Start** at the top. Everything is remembered for next time. ↻ copies your Lock defaults back in.
-- **Profiles:** named, reusable locks, each with an icon (built-in icons or any emoji). You can drag them to reorder, and start one with ▶ (the length can be adjusted before starting).
+- **Profiles:** named, reusable locks, each with an icon (built-in icons or any emoji). You can drag them to reorder, and start one with ▶ (it asks Cancel / Go and uses the profile's length).
 - **Lock defaults:** a baseline that new profiles start from, and that Quick lock can copy.
 - **Countdown screen:** while locked, the app shows only the time left and the end time, so settings can't be changed mid-lock.
 
 ### During a lock
-- **Allowed apps:** open them from the lock-screen notification (Phone, Allowed apps…). Leaving them, including going Home or opening the app switcher, locks the phone again.
+- **Allowed apps:** open them from the lock-screen notification (Phone, Allowed apps…). Opening any other app locks the phone again.
+- **Allowed-apps screen:** OLED black, with the time and date top-left and the time left top-right. Clock size, app-name size, font (built-in or your own .ttf / .otf), status bar and time left are set under Settings → Appearance.
+- **Home during a lock:** by default, Home (or the app switcher) opens the allowed-apps list again. Settings → During a lock → *Home opens…* can make it open the countdown screen, or lock the phone instead.
+- **Hidden allowed apps:** 👁 next to a checked app keeps it allowed but out of the list. The camera is allowed and hidden by default, so "take a photo" in WhatsApp or Messages, and the double-press camera, work during a lock.
+- **System pickers:** the file picker, photo picker and share sheet always work inside allowed apps. Opening a file or sharing into another app still locks.
+- **Assistant popup:** optional (Settings → During a lock, off by default). Allows only the Gemini / Assistant popup from the power button or a corner swipe; the full Google and Gemini apps still lock.
+- **Accessibility overlays** (e.g. a grayscale app) don't count as leaving an allowed app.
 - **Back to where you were:** if the screen turns off inside an allowed app, unlocking can either return you to that app, or show the countdown screen and lock again after a few seconds unless you pick an app. You choose this per profile.
 - **Early unlock:** optional, per lock. Request it from the lock-screen notification, then wait N minutes before the lock ends. It can be cancelled.
 - **Do Not Disturb:** optional, at a level of your choice: Priority only, Alarms only, or Total silence. It uses the app's own modes, so your manual DND is never overwritten.

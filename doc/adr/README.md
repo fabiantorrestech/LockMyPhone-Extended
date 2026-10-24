@@ -5,6 +5,7 @@
 
 | ADR | Title | Status | Supersedes |
 | --- | --- | --- | --- |
+| [0007](0007-unlocks-open-the-countdown-and-not-allowed-apps-get-a-warning-overlay.md) | Unlocks open the countdown, and not-allowed apps get a warning overlay | Accepted | — |
 | [0006](0006-native-beacon-handling-matched-by-device-or-format.md) | Native beacon handling, matched by device or format | Accepted | — |
 | [0005](0005-one-lock-at-a-time-ranked-by-kind.md) | One lock at a time, ranked by kind | Accepted | — |
 | [0004](0004-detect-locations-with-play-services-geofencing-or-built-in-location.md) | Detect locations with Play Services geofencing, or built-in location as an option | Accepted | — |

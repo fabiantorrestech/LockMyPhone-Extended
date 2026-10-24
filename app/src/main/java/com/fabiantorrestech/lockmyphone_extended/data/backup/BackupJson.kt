@@ -3,6 +3,7 @@ package com.fabiantorrestech.lockmyphone_extended.data.backup
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.lock.QUICK_LOCK_ID
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
+import com.fabiantorrestech.lockmyphone_extended.core.lock.HomeAction
 import com.fabiantorrestech.lockmyphone_extended.data.BypassDefaults
 import com.fabiantorrestech.lockmyphone_extended.data.FontChoice
 import com.fabiantorrestech.lockmyphone_extended.data.LockDefaults
@@ -41,6 +42,10 @@ import org.json.JSONObject
 data class SettingsSnapshot(
     val quickDurationSec: Long,
     val quickAllowedPackages: Set<String>,
+    val quickHiddenPackages: Set<String>,
+    val assistantPopupAllowed: Boolean,
+    val homeAction: HomeAction,
+    val unlockIntoAllowedApp: Boolean,
     val quickBypass: BypassDefaults,
     val quickDndEnabled: Boolean,
     val quickDndLevel: DndLevel,
@@ -142,6 +147,10 @@ object BackupJson {
     private fun settingsToJson(s: SettingsSnapshot) = JSONObject().apply {
         put("quickDurationSec", s.quickDurationSec)
         put("quickAllowedPackages", strings(s.quickAllowedPackages))
+        put("quickHiddenPackages", strings(s.quickHiddenPackages))
+        put("assistantPopupAllowed", s.assistantPopupAllowed)
+        put("homeAction", s.homeAction.name)
+        put("unlockIntoAllowedApp", s.unlockIntoAllowedApp)
         put("quickBypassEnabled", s.quickBypass.enabled)
         put("quickBypassMinutes", s.quickBypass.waitMinutes)
         put("quickDndEnabled", s.quickDndEnabled)
@@ -153,6 +162,7 @@ object BackupJson {
             val d = s.lockDefaults
             put("durationSec", d.durationSec)
             put("allowedPackages", strings(d.allowedPackages))
+            put("hiddenPackages", strings(d.hiddenPackages))
             put("bypassEnabled", d.bypass.enabled)
             put("bypassMinutes", d.bypass.waitMinutes)
             put("dndEnabled", d.dndEnabled)
@@ -168,6 +178,7 @@ object BackupJson {
         put("pickerAppNameSp", s.pickerStyle.appNameSizeSp)
         put("pickerFont", s.pickerStyle.font.id)
         put("pickerHideStatusBar", s.pickerStyle.hideStatusBar)
+        put("pickerShowTimeLeft", s.pickerStyle.showTimeLeft)
         put("alarmDayStartMinutes", s.alarmDayStartMinutes)
         put("locationEngine", s.locationEngine.name)
         put("calendarSkipDeclined", s.calendarSkipDeclined)
@@ -188,6 +199,11 @@ object BackupJson {
         return SettingsSnapshot(
             quickDurationSec = o.optLong("quickDurationSec", 30L * 60),
             quickAllowedPackages = stringSet(o, "quickAllowedPackages"),
+            // Backups from before M24 have none of these: nothing hidden, assistant off, Home → allowed apps.
+            quickHiddenPackages = stringSet(o, "quickHiddenPackages"),
+            assistantPopupAllowed = o.optBoolean("assistantPopupAllowed", false),
+            homeAction = enumOr(o.optString("homeAction"), HomeAction.ALLOWED_APPS),
+            unlockIntoAllowedApp = o.optBoolean("unlockIntoAllowedApp", true),
             quickBypass = BypassDefaults(o.optBoolean("quickBypassEnabled", true), o.optInt("quickBypassMinutes", 10)),
             quickDndEnabled = o.optBoolean("quickDndEnabled"),
             quickDndLevel = enumOr(o.optString("quickDndLevel"), DndLevel.PRIORITY),
@@ -197,6 +213,7 @@ object BackupJson {
             lockDefaults = LockDefaults(
                 durationSec = d.optLong("durationSec", 60L * 60),
                 allowedPackages = stringSet(d, "allowedPackages"),
+                hiddenPackages = stringSet(d, "hiddenPackages"),
                 bypass = BypassDefaults(d.optBoolean("bypassEnabled", true), d.optInt("bypassMinutes", 10)),
                 dndEnabled = d.optBoolean("dndEnabled"),
                 dndLevel = enumOr(d.optString("dndLevel"), DndLevel.PRIORITY),
@@ -212,6 +229,7 @@ object BackupJson {
                 appNameSizeSp = o.optInt("pickerAppNameSp", PickerStyle.DEFAULT_APP_NAME_SIZE_SP),
                 font = FontChoice.fromId(o.optStringOrNull("pickerFont")),
                 hideStatusBar = o.optBoolean("pickerHideStatusBar", true),
+                showTimeLeft = o.optBoolean("pickerShowTimeLeft", true),
             ).clamped(),
             alarmDayStartMinutes = o.optInt("alarmDayStartMinutes", 120),
             locationEngine = enumOr(o.optString("locationEngine"), LocationEngineChoice.PLAY_SERVICES),
@@ -236,6 +254,7 @@ object BackupJson {
     private fun profileToJson(p: LockProfile) = JSONObject().apply {
         put("id", p.id); put("name", p.name); put("defaultDurationSec", p.defaultDurationSec)
         put("allowedPackages", strings(p.allowedPackages)); put("bypassEnabled", p.bypassEnabled)
+        put("hiddenPackages", strings(p.hiddenPackages))
         put("bypassWaitMinutes", p.bypassWaitMinutes); put("nfcUnlockEnabled", p.nfcUnlockEnabled)
         put("dndEnabled", p.dndEnabled); put("dndLevel", p.dndLevel.name); put("grayscale", p.grayscale)
         put("unlockResumeMode", p.unlockResumeMode.name); put("unlockChoiceSeconds", p.unlockChoiceSeconds)
@@ -245,6 +264,7 @@ object BackupJson {
     private fun profileFromJson(o: JSONObject) = LockProfile(
         id = o.getLong("id"), name = o.getString("name"), defaultDurationSec = o.optLong("defaultDurationSec", 3600),
         allowedPackages = stringSet(o, "allowedPackages"), bypassEnabled = o.optBoolean("bypassEnabled", true),
+        hiddenPackages = stringSet(o, "hiddenPackages"),
         bypassWaitMinutes = o.optInt("bypassWaitMinutes", 10), nfcUnlockEnabled = o.optBoolean("nfcUnlockEnabled"),
         dndEnabled = o.optBoolean("dndEnabled"), dndLevel = enumOr(o.optString("dndLevel"), DndLevel.PRIORITY),
         grayscale = o.optBoolean("grayscale"),

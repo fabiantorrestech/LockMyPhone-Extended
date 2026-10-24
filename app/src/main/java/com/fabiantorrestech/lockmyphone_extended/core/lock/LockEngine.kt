@@ -35,7 +35,25 @@ sealed interface StartDecision {
 }
 
 /** What to do when a new app window comes to the front while the device is unlocked. */
-enum class ForegroundDecision { IGNORE, RELOCK }
+enum class ForegroundDecision {
+    IGNORE,
+    RELOCK,
+
+    /** The launcher (Home, app switcher) during a pass: open the allowed apps or countdown instead. */
+    REDIRECT,
+}
+
+/**
+ * A visit to one allowed app's App info page in Settings, opened from the allowed-apps list
+ * (e.g. to force stop it). Only that page and its dialogs are let through.
+ *
+ * @param settingsPackage the package that shows App info.
+ * @param pageClassName the App info page's activity, once it has come to the front.
+ */
+data class AppInfoVisit(
+    val settingsPackage: String,
+    val pageClassName: String? = null,
+)
 
 /**
  * The lock rules, in pure Kotlin with no Android dependencies.
@@ -50,6 +68,8 @@ class LockEngine {
      * it's the same automation's own running lock.
      *
      * @param bypassDelayMs the early-unlock wait, or null if early unlock isn't allowed.
+     * @param hiddenPackages allowed apps left out of the lock-screen list.
+     * @param options the global "During a lock" settings.
      */
     fun start(
         current: LockState,
@@ -64,6 +84,8 @@ class LockEngine {
         resumeMode: UnlockResumeMode,
         unlockChoiceSeconds: Int,
         source: LockSource,
+        hiddenPackages: Set<String> = emptySet(),
+        options: GlobalLockOptions = GlobalLockOptions(),
     ): StartDecision {
         require(durationMs > 0) { "durationMs must be positive" }
         require(bypassDelayMs == null || bypassDelayMs > 0) { "bypassDelayMs must be positive" }
@@ -81,6 +103,11 @@ class LockEngine {
                 resumeMode = resumeMode,
                 unlockChoiceSeconds = unlockChoiceSeconds,
                 source = source,
+                // Only allowed apps can be hidden.
+                hiddenPackages = hiddenPackages intersect allowedPackages,
+                assistantPopupAllowed = options.assistantPopupAllowed,
+                homeAction = options.homeAction,
+                unlockIntoAllowedApp = options.unlockIntoAllowedApp,
             )
         )
         // A lock whose time is up counts as over, even before its end alarm has run.
@@ -176,6 +203,28 @@ class LockEngine {
         }
     }
 
+    /**
+     * Called when the user unlocks with no pass to resume. If the lock allows it and the app in
+     * front is an allowed app or this app's own screen (e.g. after tapping an allowed app's
+     * notification on the lock screen), a pass starts as if the app had been picked from the list.
+     * Returns null when the normal unlock rules apply.
+     *
+     * @param appInFront the last app seen in front, ignoring system components; null if unknown.
+     */
+    fun grantUnlockPass(
+        state: LockState,
+        nowMs: Long,
+        appInFront: String?,
+        appInFrontIsOwnApp: Boolean,
+    ): LockState? {
+        if (!isActive(state, nowMs) || appInFront == null) return null
+        val locked = state as LockState.Locked
+        val session = locked.session
+        if (!session.unlockIntoAllowedApp || session.passActive) return null
+        if (!appInFrontIsOwnApp && appInFront !in session.allowedPackages) return null
+        return locked.copy(session = session.copy(passActive = true, passPaused = false))
+    }
+
     /** Turns a paused pass back into an active one. */
     fun resumePass(state: LockState): LockState = when (state) {
         is LockState.Locked -> state.copy(session = state.session.copy(passActive = true, passPaused = false))
@@ -186,19 +235,35 @@ class LockEngine {
      * Called for each app that comes to the front while the device is unlocked.
      * Without a pass, it ignores the event: the unlock handler already relocks.
      * With a pass, only allowed apps and system components ([isAlwaysAllowed]) may be in
-     * front. Anything else relocks, including the launcher, which is the home screen and the
-     * app switcher.
+     * front. The launcher (home screen and app switcher) redirects, unless the lock's
+     * [HomeAction] is LOCK. Anything else relocks.
      */
     fun decideOnForeground(
         state: LockState,
         nowMs: Long,
         packageName: String,
         isAlwaysAllowed: Boolean,
+        isLauncher: Boolean,
     ): ForegroundDecision {
         if (!isActive(state, nowMs)) return ForegroundDecision.IGNORE
         val session = (state as LockState.Locked).session
         if (!session.passActive) return ForegroundDecision.IGNORE
         if (isAlwaysAllowed || packageName in session.allowedPackages) return ForegroundDecision.IGNORE
+        if (isLauncher && session.homeAction != HomeAction.LOCK) return ForegroundDecision.REDIRECT
         return ForegroundDecision.RELOCK
+    }
+
+    /**
+     * A Settings window during an [AppInfoVisit]. The first Settings activity is the App info
+     * page; it reports itself more than once, and its dialogs (Force stop's confirmation) aren't
+     * activities. A different Settings activity means the user moved on from App info. Android
+     * gives no window IDs here, so pages inside the same activity can't be told apart.
+     * Returns the visit to keep, or null if this window leaves it.
+     */
+    fun followAppInfoVisit(visit: AppInfoVisit, isActivity: Boolean, className: String?): AppInfoVisit? = when {
+        !isActivity -> visit
+        visit.pageClassName == null -> visit.copy(pageClassName = className)
+        className == visit.pageClassName -> visit
+        else -> null
     }
 }

@@ -35,6 +35,7 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.NfcTag
  */
 data class LockSettings(
     val durationSec: Long,
+    /** Allowed apps shown in the lock-screen list. */
     val allowedAppCount: Int,
     val bypassEnabled: Boolean,
     val bypassWaitMinutes: Int,
@@ -43,6 +44,8 @@ data class LockSettings(
     val grayscale: Boolean,
     val resumeMode: UnlockResumeMode,
     val choiceSeconds: Int,
+    /** Allowed apps hidden from the lock-screen list (e.g. the camera). */
+    val hiddenAppCount: Int = 0,
 )
 
 /**
@@ -87,6 +90,7 @@ fun LockSettingsSections(
             icon = Icons.Filled.Apps,
             title = stringResource(R.string.allowed_edit),
             summary = context.resources.getQuantityString(R.plurals.apps_count, settings.allowedAppCount, settings.allowedAppCount) +
+                (if (settings.hiddenAppCount > 0) " · " + stringResource(R.string.apps_hidden_count, settings.hiddenAppCount) else "") +
                 " · " + stringResource(R.string.profile_phone_always),
             onClick = onEditAllowedApps,
         )

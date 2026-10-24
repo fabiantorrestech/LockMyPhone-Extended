@@ -294,7 +294,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // The UI is only reachable after the user unlocked, so the default profile can be seeded
         // from the older settings now.
-        lifecycleScope.launch { container.ensureDefaultProfile() }
+        lifecycleScope.launch {
+            container.ensureDefaultProfile()
+            container.seedCameraOnce()
+        }
         readRequestedTab(intent)
         setContent {
             val themeMode by container.settingsStore.themeMode.collectAsState()
@@ -495,6 +498,7 @@ class MainActivity : ComponentActivity() {
         val quickDndLevel by container.settingsStore.quickDndLevel.collectAsState()
         val showIcons by container.settingsStore.showAppIcons.collectAsState()
         val quickApps by container.settingsStore.allowedPackages.collectAsState()
+        val quickHidden by container.settingsStore.quickHiddenPackages.collectAsState()
         val quickDurationSec by container.settingsStore.quickDurationSec.collectAsState()
         val quickBypass by container.settingsStore.bypassDefaults.collectAsState()
         val quickResumeMode by container.settingsStore.quickResumeMode.collectAsState()
@@ -829,7 +833,8 @@ class MainActivity : ComponentActivity() {
                 },
                 quickLock = LockSettings(
                     durationSec = quickDurationSec,
-                    allowedAppCount = quickApps.size,
+                    allowedAppCount = (quickApps - quickHidden).size,
+                    hiddenAppCount = (quickHidden intersect quickApps).size,
                     bypassEnabled = quickBypass.enabled,
                     bypassWaitMinutes = quickBypass.waitMinutes,
                     dndEnabled = quickDnd,
@@ -854,6 +859,12 @@ class MainActivity : ComponentActivity() {
                     onAddFont = ::addPickerFont,
                     onRemoveFont = ::removePickerFont,
                 ),
+                assistantPopupAllowed = container.settingsStore.assistantPopupAllowed.collectAsState().value,
+                onAssistantPopupChange = container.settingsStore::setAssistantPopupAllowed,
+                homeAction = container.settingsStore.homeAction.collectAsState().value,
+                onHomeActionChange = container.settingsStore::setHomeAction,
+                unlockIntoAllowedApp = container.settingsStore.unlockIntoAllowedApp.collectAsState().value,
+                onUnlockIntoAllowedAppChange = container.settingsStore::setUnlockIntoAllowedApp,
                 startActions = remember {
                     StartLockActions(
                         onEditQuickApps = { screen = Screen.QUICK_APPS },
@@ -1299,7 +1310,11 @@ class MainActivity : ComponentActivity() {
                 loadApps = loadApps,
                 iconProvider = container.appCatalog,
                 selected = quickApps,
-                onSelectionChange = container.settingsStore::setAllowedPackages,
+                hidden = quickHidden,
+                onSelectionChange = { apps, hidden ->
+                    container.settingsStore.setAllowedPackages(apps)
+                    container.settingsStore.setQuickHiddenPackages(hidden)
+                },
                 onBack = goHome,
                 modifier = modifier,
             )
@@ -1361,7 +1376,10 @@ class MainActivity : ComponentActivity() {
                     loadApps = loadApps,
                     iconProvider = container.appCatalog,
                     selected = draft.allowedPackages,
-                    onSelectionChange = { defaultsDraft = draft.copy(allowedPackages = it) },
+                    hidden = draft.hiddenPackages,
+                    onSelectionChange = { apps, hidden ->
+                        defaultsDraft = draft.copy(allowedPackages = apps, hiddenPackages = hidden)
+                    },
                     onBack = { screen = Screen.DEFAULTS },
                     modifier = modifier,
                 )
@@ -1371,7 +1389,10 @@ class MainActivity : ComponentActivity() {
                     loadApps = loadApps,
                     iconProvider = container.appCatalog,
                     selected = draft.allowedPackages,
-                    onSelectionChange = { profileDraft = draft.copy(allowedPackages = it) },
+                    hidden = draft.hiddenPackages,
+                    onSelectionChange = { apps, hidden ->
+                        profileDraft = draft.copy(allowedPackages = apps, hiddenPackages = hidden)
+                    },
                     onBack = { screen = Screen.PROFILE },
                     modifier = modifier,
                 )

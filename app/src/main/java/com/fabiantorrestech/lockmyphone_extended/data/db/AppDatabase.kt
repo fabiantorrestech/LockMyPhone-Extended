@@ -432,7 +432,7 @@ class Converters {
 /** See ADR 0003: kept in device-protected storage so receivers can read it before the first unlock. */
 @Database(
     entities = [LockProfile::class, LockSchedule::class, AlarmTrigger::class, LocationTrigger::class, LocationSlot::class, CalendarTrigger::class, NfcTag::class, BeaconName::class, WakeTrigger::class],
-    version = 25,
+    version = 26,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -456,7 +456,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.createDeviceProtectedStorageContext(),
                 AppDatabase::class.java,
                 NAME,
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25).build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26).build()
 
         /** v2: profiles gain a Do Not Disturb switch (off for existing profiles). */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -653,6 +653,13 @@ abstract class AppDatabase : RoomDatabase() {
          * v23: several Wi-Fi networks per place (M20). Each place's one router (and its Listen
          * harder router) becomes a one-network list; the old columns stay, unused.
          */
+        /** v26: allowed apps can be hidden from the lock-screen list (M24). */
+        private val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE profiles ADD COLUMN hiddenPackages TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         /** v25: Morning lock stands down for alarm locks, counts from the first screen-on, per-day end, late check (M22.1). */
         private val MIGRATION_24_25 = object : Migration(24, 25) {
             override fun migrate(db: SupportSQLiteDatabase) {

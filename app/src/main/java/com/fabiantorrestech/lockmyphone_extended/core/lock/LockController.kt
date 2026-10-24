@@ -70,6 +70,10 @@ class LockController(
     /** Opens the countdown screen (MainActivity). Set by the app container, so this class stays UI-free. */
     var onShowLockScreen: (() -> Unit)? = null
 
+    /** Opens the allowed apps or the countdown when Home is pressed during a pass. Set by the app container. */
+    var onRedirectHome: ((HomeAction) -> Unit)? = null
+
+
     /**
      * The last app seen in front, ignoring system components (keyguard, shade, keyboards). It's
      * also updated while the keyguard shows, so an app opened over the lock screen (e.g. the
@@ -77,6 +81,16 @@ class LockController(
      * pass can't resume and the phone relocks.
      */
     private var lastAppInFront: String? = null
+
+    /** Diagnostics only: [lastAppInFront] when the screen turned off and paused the pass. */
+    private var appInFrontWhenPaused: String? = null
+
+    /**
+     * An App info page opened from the allowed-apps list, or null. It ends when the user is back
+     * on this app, on a relock or a new pass; screen off keeps it with the paused pass. In memory only: after a process
+     * restart Settings relocks, which is the safe side.
+     */
+    private var appInfoVisit: AppInfoVisit? = null
 
     private val _choiceDeadlineMs = MutableStateFlow<Long?>(null)
 
@@ -108,6 +122,20 @@ class LockController(
         }
     }
 
+    /**
+     * Safety net after a Home redirect: if the launcher is still in front (the screen didn't open,
+     * e.g. Android blocked it), the home screen must not stay usable during a pass, so relock.
+     */
+    private val redirectCheck = Runnable {
+        val app = lastAppInFront ?: return@Runnable
+        val passActive = (store.current as? LockState.Locked)?.session?.passActive == true
+        if (!passActive || isKeyguardLocked() || !foregroundPolicy.isLauncher(app)) return@Runnable
+        Log.i(TAG, "Still on the launcher after a Home redirect; relocking")
+        cancelLockScreenChoice()
+        store.save(engine.clearPass(store.current))
+        relocker.lockNow()
+    }
+
     /** The countdown screen waited long enough without the user picking an app. */
     private val choiceRelock = Runnable {
         _choiceDeadlineMs.value = null
@@ -129,6 +157,8 @@ class LockController(
      * @param unlockChoiceSeconds how long the countdown screen waits with
      *   [UnlockResumeMode.SHOW_LOCK_SCREEN].
      * @param source what started it; its kind decides whether it may replace a running lock.
+     * @param hiddenPackages allowed apps not listed on the lock screen (e.g. the camera).
+     * @param options the global "During a lock" settings, saved into the lock.
      */
     fun startLock(
         durationMs: Long,
@@ -141,6 +171,8 @@ class LockController(
         resumeMode: UnlockResumeMode,
         unlockChoiceSeconds: Int,
         source: LockSource,
+        hiddenPackages: Set<String>,
+        options: GlobalLockOptions,
     ): StartResult {
         if (!relocker.isAdminActive()) return StartResult.AdminNotActive
 
@@ -157,6 +189,8 @@ class LockController(
             resumeMode = resumeMode,
             unlockChoiceSeconds = unlockChoiceSeconds,
             source = source,
+            hiddenPackages = hiddenPackages,
+            options = options,
         )
         val (newState, previous) = when (decision) {
             is StartDecision.Refused -> {
@@ -214,11 +248,14 @@ class LockController(
      */
     fun onUserUnlocked() {
         if (tryResumePass()) return
+        if (tryUnlockIntoAllowedApp()) return
         val decision = engine.decideOnUnlock(store.current, clock())
         Log.i(TAG, "User unlocked; decision=$decision")
         when (decision) {
             UnlockDecision.RELOCK -> {
+                logResumeFailure()
                 // A paused pass that couldn't resume (another app is in front) is used up.
+                appInfoVisit = null
                 store.save(engine.clearPass(store.current))
                 mainHandler.removeCallbacks(pendingRelock)
                 if (!tryOpenGate()) mainHandler.postDelayed(pendingRelock, RELOCK_GRACE_MS)
@@ -226,6 +263,20 @@ class LockController(
             UnlockDecision.END_LOCK -> endLock()
             UnlockDecision.NONE -> Unit
         }
+    }
+
+    /**
+     * The unlock landed on an allowed app or this app's screens: grant a pass instead of
+     * relocking ([LockEngine.grantUnlockPass]). Returns true if it did.
+     */
+    private fun tryUnlockIntoAllowedApp(): Boolean {
+        if (!LockAccessibilityService.isRunning) return false
+        val appInFront = lastAppInFront
+        val newState = engine.grantUnlockPass(store.current, clock(), appInFront, appInFront == context.packageName)
+            ?: return false
+        applyPass(newState)
+        Log.i(TAG, "Unlocked into $appInFront; pass granted")
+        return true
     }
 
     /** Grants a pass for an allowed app. Returns false if it isn't allowed or can't be enforced. */
@@ -244,7 +295,21 @@ class LockController(
         return true
     }
 
+    /**
+     * The allowed-apps list is about to open an allowed app's App info page (e.g. to force stop
+     * it): let that one page through ([LockEngine.followAppInfoVisit]). Returns false without a
+     * running pass.
+     */
+    fun startAppInfoVisit(settingsPackage: String): Boolean {
+        val session = (store.current as? LockState.Locked)?.session ?: return false
+        if (!session.passActive) return false
+        appInfoVisit = AppInfoVisit(settingsPackage)
+        Log.i(TAG, "Opening App info in $settingsPackage")
+        return true
+    }
+
     private fun applyPass(newState: LockState) {
+        appInfoVisit = null
         mainHandler.removeCallbacks(pendingRelock)
         // Picking an app (or opening the picker) on the countdown screen answers its question.
         cancelLockScreenChoice()
@@ -258,12 +323,36 @@ class LockController(
         val gateWasOpen = _gateActive.value
         cancelLockScreenChoice()
         if (gateWasOpen) {
+            appInfoVisit = null
             store.save(engine.clearPass(store.current))
             return
         }
         val paused = engine.pausePass(store.current) ?: return
         store.save(paused)
+        appInFrontWhenPaused = lastAppInFront
         Log.i(TAG, "Screen off; pass paused (app in front: $lastAppInFront)")
+    }
+
+    /**
+     * Diagnostics: a pass paused at screen-off that couldn't resume on unlock, and the app in front
+     * then versus when it paused. "unknown" now means the app's process restarted in between.
+     */
+    private fun logResumeFailure() {
+        val session = (store.current as? LockState.Locked)?.session ?: return
+        if (!session.passPaused) return
+        val note = "couldn't resume: app in front ${lastAppInFront ?: "unknown"}, " +
+            "paused in ${appInFrontWhenPaused ?: "unknown"}"
+        Log.w(TAG, "Unlocked; $note")
+        foregroundLog.add(
+            ForegroundLog.Entry(
+                timeMs = clock(),
+                packageName = "(unlock)",
+                className = null,
+                verdict = ForegroundLog.Verdict.OTHER,
+                relocked = true,
+                note = note,
+            )
+        )
     }
 
     /**
@@ -323,14 +412,26 @@ class LockController(
      * is also recorded for the diagnostics screen.
      */
     fun onForegroundApp(packageName: String, className: String?) {
-        val alwaysAllowed = foregroundPolicy.isAlwaysAllowed(packageName, className)
+        val session = (store.current as? LockState.Locked)?.session
+        val onAppInfo = followAppInfoVisit(packageName, className, session)
+        val alwaysAllowed = onAppInfo || foregroundPolicy.isAlwaysAllowed(
+            packageName,
+            className,
+            allowAssistantPopup = session?.assistantPopupAllowed == true,
+        )
         // System components (keyguard, shade, keyboards) sit on top of the real app, so they
         // don't count. This app does: its picker and countdown screen are pass screens.
         if (!alwaysAllowed || packageName == context.packageName) lastAppInFront = packageName
         val decision = if (isKeyguardLocked()) {
             ForegroundDecision.IGNORE
         } else {
-            engine.decideOnForeground(store.current, clock(), packageName, alwaysAllowed)
+            engine.decideOnForeground(
+                store.current,
+                clock(),
+                packageName,
+                alwaysAllowed,
+                isLauncher = foregroundPolicy.isLauncher(packageName),
+            )
         }
         val relock = decision == ForegroundDecision.RELOCK
         foregroundLog.add(
@@ -340,14 +441,62 @@ class LockController(
                 className = className,
                 verdict = verdictFor(packageName, alwaysAllowed),
                 relocked = relock,
+                note = when {
+                    decision == ForegroundDecision.REDIRECT -> "home → ${session?.homeAction}"
+                    onAppInfo -> "App info"
+                    else -> null
+                },
             )
         )
         if (relock) {
+            appInfoVisit = null
             Log.i(TAG, "Left allowed apps (foreground=$packageName/$className); relocking")
             cancelLockScreenChoice()
             store.save(engine.clearPass(store.current))
             relocker.lockNow()
         }
+        if (decision == ForegroundDecision.REDIRECT && session != null) redirectHome(session.homeAction)
+    }
+
+    /**
+     * Updates [appInfoVisit] for this window. Returns true if it's the visit's App info page or
+     * one of its dialogs, so it doesn't relock.
+     */
+    private fun followAppInfoVisit(
+        packageName: String,
+        className: String?,
+        session: LockSession?,
+    ): Boolean {
+        val visit = appInfoVisit ?: return false
+        // Back on the allowed-apps list (or the countdown), or the pass is gone: the visit is
+        // over. A pass paused by screen off keeps it, so unlocking back onto App info resumes.
+        // Our own windows only count once App info has shown: the list's closing dialog can
+        // report itself just after the visit starts, before Settings comes up.
+        val passKept = session?.passActive == true || session?.passPaused == true
+        val backOnOurApp = packageName == context.packageName && visit.pageClassName != null
+        if (backOnOurApp || !passKept) {
+            appInfoVisit = null
+            return false
+        }
+        if (packageName != visit.settingsPackage) return false
+        val next = engine.followAppInfoVisit(visit, foregroundPolicy.isActivity(packageName, className), className)
+        // Behind the lock screen, App info redraws itself on wake. That counts as App info (so
+        // the paused pass can resume on it), but it never moves the visit on.
+        if (isKeyguardLocked()) return next == visit
+        if (next == null) Log.i(TAG, "Moved on from App info to $className")
+        appInfoVisit = next
+        return next != null
+    }
+
+    /**
+     * Opens the allowed apps (or countdown) for every launcher window: repeated starts reuse the
+     * same screen (CLEAR_TOP | SINGLE_TOP), so nothing stacks and no Home press is ignored.
+     */
+    private fun redirectHome(action: HomeAction) {
+        Log.i(TAG, "Home during a pass; opening $action")
+        onRedirectHome?.invoke(action)
+        mainHandler.removeCallbacks(redirectCheck)
+        mainHandler.postDelayed(redirectCheck, REDIRECT_CHECK_MS)
     }
 
     private fun verdictFor(packageName: String, alwaysAllowed: Boolean): ForegroundLog.Verdict = when {
@@ -453,5 +602,8 @@ class LockController(
 
         /** Long enough for SystemUI to open the pass activity after an unlock, short enough to feel instant. */
         const val RELOCK_GRACE_MS = 1_000L
+
+        /** How long a Home redirect gets to show its screen before [redirectCheck] relocks. */
+        const val REDIRECT_CHECK_MS = 1_500L
     }
 }

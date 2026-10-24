@@ -8,14 +8,30 @@ object OemProfiles {
 
     /** Allowed on every device: core Android and AOSP system components. */
     val COMMON_ALLOWED: Set<String> = setOf(
-        "android", // system dialogs
+        "android", // system dialogs, the old share sheet
         "com.android.systemui", // notification shade, volume, keyguard, power menu
         "com.android.server.telecom", // call handling
         "com.android.phone", // emergency dialer, SIM dialogs
         "com.android.emergency", // emergency information
         "com.google.android.permissioncontroller",
         "com.android.permissioncontroller",
+        // Pickers an allowed app opens ("attach a file", "choose photos", "share"). Opening a file
+        // or sharing into another app brings that app to the front, which still relocks.
+        "com.google.android.documentsui", "com.android.documentsui", // file picker
+        "com.google.android.photopicker", "com.android.photopicker", // photo picker (Android 14+)
+        "com.google.android.providers.media.module", "com.android.providers.media.module", // photo picker before 14
+        "com.android.intentresolver", // share sheet (Android 14+)
     )
+
+    /** The Google app, which hosts the Gemini / Assistant popup (power-button hold, corner swipe). */
+    const val ASSISTANT_PACKAGE = "com.google.android.googlequicksearchbox"
+
+    /** The popup's activities. Recorded on a Pixel 7 on 2026-10-08: `…floaty.activity.FloatyActivity`. */
+    private const val ASSISTANT_POPUP_CLASS_PREFIX =
+        "com.google.android.apps.search.assistant.surfaces.voice.robin.ui.floaty."
+
+    fun isAssistantPopupClass(packageName: String, className: String?): Boolean =
+        packageName == ASSISTANT_PACKAGE && className?.startsWith(ASSISTANT_POPUP_CLASS_PREFIX) == true
 
     val PIXEL = OemProfile(
         id = "pixel",

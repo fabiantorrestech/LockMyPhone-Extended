@@ -116,7 +116,7 @@ class LockNotifications(
             )
             val dialer = appCatalog.defaultDialerPackage()
             // With Refresh, this slot goes to Refresh: tapping the notification opens the same list.
-            if (!refreshable && session.allowedPackages.any { it != dialer }) {
+            if (!refreshable && session.allowedPackages.any { it != dialer && it !in session.hiddenPackages }) {
                 builder.addAction(
                     0,
                     context.getString(R.string.notif_action_allowed_apps),

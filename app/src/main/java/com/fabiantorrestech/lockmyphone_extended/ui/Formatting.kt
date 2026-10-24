@@ -69,10 +69,13 @@ fun formatSchedule(context: Context, schedule: LockSchedule, profileName: String
  * "0h 30m 00s" / "3 apps" / "early unlock after 10 min" / "🔕 DND (alarms only)" / "◐ grayscale"
  */
 fun formatProfileSummary(context: Context, profile: LockProfile): String {
+    val visibleCount = (profile.allowedPackages - profile.hiddenPackages).size
+    val hiddenCount = (profile.hiddenPackages intersect profile.allowedPackages).size
     val parts = mutableListOf(
         formatDurationLabel(profile.defaultDurationSec * 1_000),
-        context.resources.getQuantityString(R.plurals.apps_count, profile.allowedPackages.size, profile.allowedPackages.size),
+        context.resources.getQuantityString(R.plurals.apps_count, visibleCount, visibleCount),
     )
+    if (hiddenCount > 0) parts += context.getString(R.string.apps_hidden_count, hiddenCount)
     parts += if (profile.bypassEnabled) {
         if (profile.bypassWaitMinutes == 0) {
             context.getString(R.string.profile_summary_bypass_instant)

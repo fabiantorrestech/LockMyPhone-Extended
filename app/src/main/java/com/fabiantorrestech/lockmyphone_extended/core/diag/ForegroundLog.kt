@@ -20,6 +20,8 @@ class ForegroundLog {
         val verdict: Verdict,
         /** True if this window triggered a relock. */
         val relocked: Boolean,
+        /** Why something happened, for entries that aren't a window (e.g. a pass that couldn't resume). */
+        val note: String? = null,
     )
 
     private val _entries = MutableStateFlow<List<Entry>>(emptyList())

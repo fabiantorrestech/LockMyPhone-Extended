@@ -45,7 +45,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -59,12 +63,16 @@ import com.fabiantorrestech.lockmyphone_extended.data.SystemFont
 import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
 import com.fabiantorrestech.lockmyphone_extended.ui.theme.LockMyPhoneExtendedTheme
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
 /** The date line under the clock is this much of the clock's size. */
 private const val DATE_SIZE_RATIO = 0.3f
+
+/** AM / PM next to the time is this much of the clock's size. */
+private const val AM_PM_SIZE_RATIO = 0.35f
 
 /** The Compose font for [choice]. An added font whose file is gone falls back to the default font. */
 fun fontFamilyFor(choice: FontChoice, fonts: FontLibrary): FontFamily = when (choice) {
@@ -97,7 +105,7 @@ fun PickerClock(style: PickerStyle, fontFamily: FontFamily, modifier: Modifier =
     val dateSizeSp = style.clockSizeSp * DATE_SIZE_RATIO
     Column(modifier) {
         Text(
-            time,
+            withSmallAmPm(time, now, (style.clockSizeSp * AM_PM_SIZE_RATIO).sp),
             fontSize = style.clockSizeSp.sp,
             lineHeight = (style.clockSizeSp * 1.1f).sp,
             fontFamily = fontFamily,
@@ -110,6 +118,50 @@ fun PickerClock(style: PickerStyle, fontFamily: FontFamily, modifier: Modifier =
             fontFamily = fontFamily,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * [time] with its AM/PM marker (12-hour phones) drawn at [amPmSize], so a big clock still fits on
+ * one line next to the time left. A 24-hour time has no marker and is returned as is.
+ */
+private fun withSmallAmPm(time: String, nowMs: Long, amPmSize: TextUnit): AnnotatedString {
+    val marker = SimpleDateFormat("a", Locale.getDefault()).format(Date(nowMs))
+    val start = time.indexOf(marker)
+    if (marker.isEmpty() || start < 0) return AnnotatedString(time)
+    return buildAnnotatedString {
+        append(time)
+        addStyle(SpanStyle(fontSize = amPmSize), start, start + marker.length)
+    }
+}
+
+/** "0:47:12 left", ticking each second, for the top-right of the allowed-apps list. */
+@Composable
+fun TimeLeft(endMs: Long, style: PickerStyle, fontFamily: FontFamily, modifier: Modifier = Modifier) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(endMs) {
+        while (now < endMs) {
+            delay(1_000 - System.currentTimeMillis() % 1_000)
+            now = System.currentTimeMillis()
+        }
+    }
+    val sizeSp = style.clockSizeSp * DATE_SIZE_RATIO
+    Text(
+        stringResource(R.string.picker_time_left, formatDurationClock((endMs - now).coerceAtLeast(0))),
+        fontSize = sizeSp.sp,
+        lineHeight = (sizeSp * 1.2f).sp,
+        fontFamily = fontFamily,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier,
+    )
+}
+
+/** "Exit", in place of the time left once the lock has ended, sized like the date line. */
+@Composable
+fun ExitButton(style: PickerStyle, fontFamily: FontFamily, onExit: () -> Unit, modifier: Modifier = Modifier) {
+    val sizeSp = style.clockSizeSp * DATE_SIZE_RATIO
+    TextButton(onClick = onExit, modifier = modifier) {
+        Text(stringResource(R.string.picker_exit), fontSize = sizeSp.sp, fontFamily = fontFamily)
     }
 }
 
@@ -172,6 +224,9 @@ fun PickerAppearanceSection(appearance: PickerAppearance) {
         PickerPreview(preview, fontFamily)
         SwitchRow(stringResource(R.string.picker_hide_status_bar), style.hideStatusBar) {
             appearance.onStyleChange(style.copy(hideStatusBar = it))
+        }
+        SwitchRow(stringResource(R.string.picker_show_time_left), style.showTimeLeft) {
+            appearance.onStyleChange(style.copy(showTimeLeft = it))
         }
 
         Text(stringResource(R.string.picker_clock_size, preview.clockSizeSp))

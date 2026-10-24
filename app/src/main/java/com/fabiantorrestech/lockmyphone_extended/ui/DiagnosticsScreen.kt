@@ -113,7 +113,9 @@ private fun EntryRow(entry: ForegroundLog.Entry) {
 }
 
 private fun tagsFor(entry: ForegroundLog.Entry): String =
-    entry.verdict.name.lowercase().replace('_', '-') + if (entry.relocked) "  → RELOCKED" else ""
+    entry.verdict.name.lowercase().replace('_', '-') +
+        (if (entry.relocked) "  → RELOCKED" else "") +
+        (entry.note?.let { "  ($it)" } ?: "")
 
 private fun formatTime(timeMs: Long): String =
     SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timeMs))

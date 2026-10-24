@@ -10,6 +10,8 @@ data class PickerStyle(
     val font: FontChoice = FontChoice.System(SystemFont.DEFAULT),
     /** Hide the status bar on both screens; a swipe from the top still shows it for a moment. */
     val hideStatusBar: Boolean = true,
+    /** Show the time left in the top-right of the allowed-apps list. */
+    val showTimeLeft: Boolean = true,
 ) {
     fun clamped(): PickerStyle = copy(
         clockSizeSp = clockSizeSp.coerceIn(CLOCK_SIZE_RANGE),

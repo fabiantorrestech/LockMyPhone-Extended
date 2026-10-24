@@ -1,6 +1,7 @@
 package com.fabiantorrestech.lockmyphone_extended.trigger
 
 import com.fabiantorrestech.lockmyphone_extended.core.apps.AppCatalog
+import com.fabiantorrestech.lockmyphone_extended.core.lock.GlobalLockOptions
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockController
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSource
@@ -20,6 +21,7 @@ class ProfileLockStarter(
     private val appCatalog: AppCatalog,
     private val holds: AutomationHolds,
     private val settingsStore: () -> SettingsStore,
+    private val globalOptions: () -> GlobalLockOptions,
 ) {
 
     /**
@@ -40,6 +42,8 @@ class ProfileLockStarter(
             resumeMode = profile.unlockResumeMode,
             unlockChoiceSeconds = profile.unlockChoiceSeconds,
             source = LockSource(kind, profile.id.toString(), ownerId, profile.name),
+            hiddenPackages = profile.hiddenPackages,
+            options = globalOptions(),
         )
     }
 
@@ -67,6 +71,8 @@ class ProfileLockStarter(
             resumeMode = settings.quickResumeMode.value,
             unlockChoiceSeconds = settings.quickChoiceSeconds.value,
             source = LockSource(kind, QUICK_LOCK_ID, ownerId),
+            hiddenPackages = settings.quickHiddenPackages.value,
+            options = globalOptions(),
         )
     }
 

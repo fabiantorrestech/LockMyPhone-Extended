@@ -11,6 +11,28 @@ enum class UnlockResumeMode {
     SHOW_LOCK_SCREEN,
 }
 
+/** What Home (or the app switcher) does during a pass. */
+enum class HomeAction {
+    /** Opens the allowed-apps list again. */
+    ALLOWED_APPS,
+
+    /** Opens the countdown screen. */
+    COUNTDOWN,
+
+    /** Locks the phone (the behaviour before M24). */
+    LOCK,
+}
+
+/**
+ * The global "During a lock" settings, saved into each lock when it starts. Before the first
+ * unlock after a boot the settings can't be read, so the defaults apply.
+ */
+data class GlobalLockOptions(
+    val assistantPopupAllowed: Boolean = false,
+    val homeAction: HomeAction = HomeAction.ALLOWED_APPS,
+    val unlockIntoAllowedApp: Boolean = true,
+)
+
 /**
  * One lock period. All times are wall-clock epoch millis, so a reboot can't reset them.
  *
@@ -31,6 +53,12 @@ enum class UnlockResumeMode {
  *   screen waits for the user to pick an app before locking again.
  * @param source where this lock came from: its kind (which decides what may replace it), the
  *   profile or Quick lock it uses, and the automation or tag that started it.
+ * @param hiddenPackages allowed apps not shown in the lock-screen list or the notification (e.g.
+ *   the camera). They're still in [allowedPackages], so enforcement treats them the same.
+ * @param assistantPopupAllowed the Gemini / Assistant popup may open during a pass.
+ * @param homeAction what Home does during a pass. Locks saved before M24 read [HomeAction.LOCK].
+ * @param unlockIntoAllowedApp an unlock that lands on an allowed app (or this app's screens) grants
+ *   a pass instead of relocking, e.g. after tapping an allowed app's notification on the lock screen.
  */
 data class LockSession(
     val label: String,
@@ -47,6 +75,10 @@ data class LockSession(
     val resumeMode: UnlockResumeMode = UnlockResumeMode.RESUME_APP,
     val unlockChoiceSeconds: Int = DEFAULT_UNLOCK_CHOICE_SECONDS,
     val source: LockSource = LockSource.UNKNOWN,
+    val hiddenPackages: Set<String> = emptySet(),
+    val assistantPopupAllowed: Boolean = false,
+    val homeAction: HomeAction = HomeAction.LOCK,
+    val unlockIntoAllowedApp: Boolean = true,
 ) {
     val bypassAllowed: Boolean get() = bypassDelayMs != null
     val bypassPending: Boolean get() = bypassEndsAtMs != null

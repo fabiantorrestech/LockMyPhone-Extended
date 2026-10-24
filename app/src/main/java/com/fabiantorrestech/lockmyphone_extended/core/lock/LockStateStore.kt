@@ -45,6 +45,10 @@ class LockStateStore(context: Context) {
                     putString(KEY_SOURCE_LOCK_ID, state.session.source.lockId)
                     putOrRemove(KEY_SOURCE_OWNER_ID, state.session.source.ownerId)
                     putString(KEY_SOURCE_NAME, state.session.source.name)
+                    putStringSet(KEY_HIDDEN_PACKAGES, state.session.hiddenPackages)
+                    putBoolean(KEY_ASSISTANT_POPUP, state.session.assistantPopupAllowed)
+                    putString(KEY_HOME_ACTION, state.session.homeAction.name)
+                    putBoolean(KEY_UNLOCK_INTO_ALLOWED_APP, state.session.unlockIntoAllowedApp)
                 }
             }
         }
@@ -74,6 +78,13 @@ class LockStateStore(context: Context) {
                     ?: UnlockResumeMode.RESUME_APP,
                 unlockChoiceSeconds = prefs.getInt(KEY_UNLOCK_CHOICE_SECONDS, LockSession.DEFAULT_UNLOCK_CHOICE_SECONDS),
                 source = readSource(),
+                hiddenPackages = prefs.getStringSet(KEY_HIDDEN_PACKAGES, null)?.toSet() ?: emptySet(),
+                assistantPopupAllowed = prefs.getBoolean(KEY_ASSISTANT_POPUP, false),
+                // A lock saved before M24 keeps the old behaviour: Home locks.
+                homeAction = prefs.getString(KEY_HOME_ACTION, null)
+                    ?.let { saved -> HomeAction.entries.firstOrNull { it.name == saved } }
+                    ?: HomeAction.LOCK,
+                unlockIntoAllowedApp = prefs.getBoolean(KEY_UNLOCK_INTO_ALLOWED_APP, true),
             )
         )
     }
@@ -117,5 +128,9 @@ class LockStateStore(context: Context) {
         const val KEY_SOURCE_LOCK_ID = "source_lock_id"
         const val KEY_SOURCE_OWNER_ID = "source_owner_id"
         const val KEY_SOURCE_NAME = "source_name"
+        const val KEY_HIDDEN_PACKAGES = "hidden_packages"
+        const val KEY_ASSISTANT_POPUP = "assistant_popup"
+        const val KEY_HOME_ACTION = "home_action"
+        const val KEY_UNLOCK_INTO_ALLOWED_APP = "unlock_into_allowed_app"
     }
 }

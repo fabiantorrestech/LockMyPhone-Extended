@@ -37,6 +37,8 @@ import com.fabiantorrestech.lockmyphone_extended.core.diag.ForegroundLog
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndController
 import com.fabiantorrestech.lockmyphone_extended.core.enforce.ForegroundPolicy
 import com.fabiantorrestech.lockmyphone_extended.core.enforce.Relocker
+import com.fabiantorrestech.lockmyphone_extended.core.lock.GlobalLockOptions
+import com.fabiantorrestech.lockmyphone_extended.core.lock.HomeAction
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockController
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockEndScheduler
@@ -47,6 +49,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.oem.OemDetector
 import com.fabiantorrestech.lockmyphone_extended.core.oem.OemProfile
 import com.fabiantorrestech.lockmyphone_extended.core.oem.OemProfiles
 import com.fabiantorrestech.lockmyphone_extended.data.FontLibrary
+import com.fabiantorrestech.lockmyphone_extended.pass.PassActivity
 import com.fabiantorrestech.lockmyphone_extended.data.SettingsStore
 
 /**
@@ -96,7 +99,7 @@ class AppContainer(context: Context) {
     /** Keeps an automation from locking while it's edited, and for a minute after it changes. */
     val automationHolds = AutomationHolds(appContext, appScope, cooldownEnabled = { settingsStore.automationCooldown.value })
 
-    val profileLockStarter = ProfileLockStarter(lockController, appCatalog, automationHolds) { settingsStore }
+    val profileLockStarter = ProfileLockStarter(lockController, appCatalog, automationHolds, { settingsStore }, ::globalLockOptions)
 
     val nfcTagHandler = NfcTagHandler(appContext, database, lockController, profileLockStarter) { settingsStore }
 
@@ -205,6 +208,19 @@ class AppContainer(context: Context) {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             )
         }
+        lockController.onRedirectHome = { action ->
+            // Allowed from the background because the accessibility service is bound by the system.
+            val intent = when (action) {
+                HomeAction.ALLOWED_APPS -> PassActivity.redirectIntent(appContext)
+                HomeAction.COUNTDOWN -> Intent(appContext, MainActivity::class.java)
+                HomeAction.LOCK -> null
+            }
+            intent?.let {
+                appContext.startActivity(
+                    it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                )
+            }
+        }
         lockController.onLockEndedEarly = { ended ->
             // Only a schedule's own lock suppresses the rest of its window.
             if (ended.source.kind == LockKind.SCHEDULE) appScope.launch { scheduleScheduler.suppressActiveWindow() }
@@ -250,6 +266,54 @@ class AppContainer(context: Context) {
                 bypassEnabled = bypass.enabled,
                 bypassWaitMinutes = bypass.waitMinutes,
             )
+        )
+    }
+
+    /**
+     * Once per install (and once after the M24 update): the camera becomes an allowed, hidden app in
+     * every profile, Quick lock and Lock defaults, so taking a photo from an allowed app doesn't
+     * relock. A list that already allowed the camera keeps it visible. Needs the user to have
+     * unlocked since boot.
+     */
+    suspend fun seedCameraOnce() {
+        if (settingsStore.cameraSeeded) return
+        val camera = appCatalog.defaultCameraPackage()
+        if (camera != null) {
+            val dao = database.profileDao()
+            dao.getAll().forEach { profile ->
+                dao.update(
+                    profile.copy(
+                        allowedPackages = profile.allowedPackages + camera,
+                        hiddenPackages = hideIfNew(profile.allowedPackages, profile.hiddenPackages, camera),
+                    )
+                )
+            }
+            val store = settingsStore
+            store.setQuickHiddenPackages(hideIfNew(store.allowedPackages.value, store.quickHiddenPackages.value, camera))
+            store.setAllowedPackages(store.allowedPackages.value + camera)
+            val defaults = store.lockDefaults.value
+            store.setLockDefaults(
+                defaults.copy(
+                    allowedPackages = defaults.allowedPackages + camera,
+                    hiddenPackages = hideIfNew(defaults.allowedPackages, defaults.hiddenPackages, camera),
+                )
+            )
+        }
+        settingsStore.setCameraSeeded()
+    }
+
+    /** [hidden] plus [app], unless [app] was already allowed (then the user chose to see it). */
+    private fun hideIfNew(allowed: Set<String>, hidden: Set<String>, app: String): Set<String> =
+        if (app in allowed) hidden else hidden + app
+
+    /** The "During a lock" settings for a lock starting now; the defaults before the first unlock after a boot. */
+    fun globalLockOptions(): GlobalLockOptions {
+        val userUnlocked = appContext.getSystemService(UserManager::class.java).isUserUnlocked
+        if (!userUnlocked) return GlobalLockOptions()
+        return GlobalLockOptions(
+            assistantPopupAllowed = settingsStore.assistantPopupAllowed.value,
+            homeAction = settingsStore.homeAction.value,
+            unlockIntoAllowedApp = settingsStore.unlockIntoAllowedApp.value,
         )
     }
 

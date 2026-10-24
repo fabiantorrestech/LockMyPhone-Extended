@@ -12,9 +12,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -38,14 +43,17 @@ import kotlinx.coroutines.withContext
 
 /**
  * A searchable checklist of launchable apps. Checked apps can be opened from the lock screen
- * during a lock.
+ * during a lock; 👁 hides a checked app from that list (it stays allowed).
+ *
+ * @param hidden the checked apps that are hidden; always a subset of [selected].
  */
 @Composable
 fun AllowedAppsScreen(
     loadApps: () -> List<LaunchableApp>,
     iconProvider: AppIconProvider,
     selected: Set<String>,
-    onSelectionChange: (Set<String>) -> Unit,
+    hidden: Set<String>,
+    onSelectionChange: (selected: Set<String>, hidden: Set<String>) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -79,6 +87,11 @@ fun AllowedAppsScreen(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
+        Text(
+            stringResource(R.string.allowed_hide_note),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -105,7 +118,7 @@ fun AllowedAppsScreen(
                     // Keeps the checkboxes clear of the scrollbar's touch strip.
                     contentPadding = PaddingValues(end = 24.dp),
                 ) {
-                    appItems(selectedGroup, selected, onSelectionChange, iconProvider)
+                    appItems(selectedGroup, selected, hidden, onSelectionChange, iconProvider)
                     if (selectedGroup.isNotEmpty() && otherGroup.isNotEmpty()) {
                         item(key = "other_apps_divider", contentType = "divider") {
                             Column(Modifier.padding(top = 8.dp)) {
@@ -119,7 +132,7 @@ fun AllowedAppsScreen(
                             }
                         }
                     }
-                    appItems(otherGroup, selected, onSelectionChange, iconProvider)
+                    appItems(otherGroup, selected, hidden, onSelectionChange, iconProvider)
                 }
                 FastScrollbar(listState, Modifier.align(Alignment.CenterEnd))
             }
@@ -127,19 +140,40 @@ fun AllowedAppsScreen(
     }
 }
 
-/** A checkbox row per app. Extension on LazyListScope so both groups share it. */
+/**
+ * A checkbox row per app, with 👁 to hide a checked app from the lock-screen list. Extension on
+ * LazyListScope so both groups share it.
+ */
 private fun LazyListScope.appItems(
     apps: List<LaunchableApp>,
     selected: Set<String>,
-    onSelectionChange: (Set<String>) -> Unit,
+    hidden: Set<String>,
+    onSelectionChange: (Set<String>, Set<String>) -> Unit,
     iconProvider: AppIconProvider,
 ) {
     items(apps, key = { it.packageName }, contentType = { "app" }) { app ->
-        val checked = app.packageName in selected
+        val packageName = app.packageName
+        val checked = packageName in selected
+        val isHidden = packageName in hidden
         val toggle = {
-            onSelectionChange(if (checked) selected - app.packageName else selected + app.packageName)
+            // Unchecking also un-hides, so checking it again starts visible.
+            if (checked) {
+                onSelectionChange(selected - packageName, hidden - packageName)
+            } else {
+                onSelectionChange(selected + packageName, hidden)
+            }
         }
         AppRow(app, iconProvider, onClick = toggle) {
+            if (checked) {
+                IconButton(onClick = {
+                    onSelectionChange(selected, if (isHidden) hidden - packageName else hidden + packageName)
+                }) {
+                    Icon(
+                        if (isHidden) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                        contentDescription = stringResource(if (isHidden) R.string.allowed_hidden else R.string.allowed_shown),
+                    )
+                }
+            }
             Checkbox(checked = checked, onCheckedChange = { toggle() })
         }
     }

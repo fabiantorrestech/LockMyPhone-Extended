@@ -113,7 +113,8 @@ fun ProfileEditorScreen(
 
 private fun LockProfile.toLockSettings() = LockSettings(
     durationSec = defaultDurationSec,
-    allowedAppCount = allowedPackages.size,
+    allowedAppCount = (allowedPackages - hiddenPackages).size,
+    hiddenAppCount = (hiddenPackages intersect allowedPackages).size,
     bypassEnabled = bypassEnabled,
     bypassWaitMinutes = bypassWaitMinutes,
     dndEnabled = dndEnabled,
