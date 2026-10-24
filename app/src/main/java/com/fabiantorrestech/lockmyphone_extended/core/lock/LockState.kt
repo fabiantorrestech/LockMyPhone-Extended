@@ -116,6 +116,8 @@ data class LimitState(
  *   allowed app. Their own screens still relock.
  * @param limit a Limited lock's sessions and cooldowns, or null for a normal lock.
  * @param limitState where that Limited lock is.
+ * @param pickerLayout the allowed-apps list's folders and row order (a synced profile's); display
+ *   only, enforcement uses [allowedPackages].
  */
 data class LockSession(
     val label: String,
@@ -139,6 +141,7 @@ data class LockSession(
     val popupPackages: Set<String> = emptySet(),
     val limit: LimitPolicy? = null,
     val limitState: LimitState = LimitState(),
+    val pickerLayout: PickerLayout = PickerLayout.NONE,
 ) {
     val bypassAllowed: Boolean get() = bypassDelayMs != null
     val bypassPending: Boolean get() = bypassEndsAtMs != null

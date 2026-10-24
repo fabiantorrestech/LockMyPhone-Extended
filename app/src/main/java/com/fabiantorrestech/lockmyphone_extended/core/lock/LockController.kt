@@ -170,6 +170,7 @@ class LockController(
      * @param hiddenPackages allowed apps not listed on the lock screen (e.g. the camera).
      * @param options the global "During a lock" settings, saved into the lock.
      * @param limit a Limited lock's sessions and cooldowns, or null for a normal lock.
+     * @param pickerLayout the allowed-apps list's folders and row order (a synced profile's).
      */
     fun startLock(
         durationMs: Long,
@@ -186,6 +187,7 @@ class LockController(
         options: GlobalLockOptions,
         restartOwn: Boolean = false,
         limit: LimitPolicy? = null,
+        pickerLayout: PickerLayout = PickerLayout.NONE,
     ): StartResult {
         if (!relocker.isAdminActive()) return StartResult.AdminNotActive
 
@@ -206,6 +208,7 @@ class LockController(
             options = options,
             restartOwn = restartOwn,
             limit = limit,
+            pickerLayout = pickerLayout,
         )
         val (newState, previous) = when (decision) {
             is StartDecision.Refused -> {

@@ -72,21 +72,24 @@ fun BoxScope.CornerPhoneButton(corner: Alignment, onDial: () -> Unit) {
 /**
  * The hidden-app search of the allowed-apps list: a faint (or invisible) icon in a bottom corner.
  * Tapping it opens the keyboard with no text box: what you type shows as plain text across the
- * bottom, on its own black band above the keyboard. Enter shows the apps whose name the text is, or
- * nearly is ([AppMatch]), just above it. Back (also closing the keyboard) or a tap anywhere else
+ * bottom, on its own black band above the keyboard. Enter shows the [candidates] whose name the
+ * text is, or nearly is ([AppMatch]), just above it. Back (also closing the keyboard) or a tap anywhere else
  * cancels and clears it: in this box here, and elsewhere on the screen with [cancelSearchOnTap].
  *
  * @param searching whether the search is open; held by the screen so taps outside this box can close it.
- * @param resultRow draws one match; tapping it opens the app.
+ * @param candidates what the search finds: hidden apps, and a synced profile's folders.
+ * @param labelOf the name a candidate is found by.
+ * @param resultRow draws one match; tapping it opens it.
  */
 @Composable
-fun BoxScope.CornerSearch(
+fun <T> BoxScope.CornerSearch(
     corner: Alignment,
     faintIcon: Boolean,
-    hiddenApps: List<LaunchableApp>,
+    candidates: List<T>,
+    labelOf: (T) -> String,
     searching: Boolean,
     onSearchingChange: (Boolean) -> Unit,
-    resultRow: @Composable (LaunchableApp) -> Unit,
+    resultRow: @Composable (T) -> Unit,
 ) {
     if (!searching) {
         Box(
@@ -104,7 +107,7 @@ fun BoxScope.CornerSearch(
             )
         }
     } else {
-        SearchBand(hiddenApps, resultRow, onCancel = { onSearchingChange(false) })
+        SearchBand(candidates, labelOf, resultRow, onCancel = { onSearchingChange(false) })
     }
 }
 
@@ -114,13 +117,14 @@ fun Modifier.cancelSearchOnTap(searching: Boolean, onCancel: () -> Unit): Modifi
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BoxScope.SearchBand(
-    hiddenApps: List<LaunchableApp>,
-    resultRow: @Composable (LaunchableApp) -> Unit,
+private fun <T> BoxScope.SearchBand(
+    candidates: List<T>,
+    labelOf: (T) -> String,
+    resultRow: @Composable (T) -> Unit,
     onCancel: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<LaunchableApp>?>(null) }
+    var results by remember { mutableStateOf<List<T>?>(null) }
     val focus = remember { FocusRequester() }
     BackHandler(onBack = onCancel)
     // With the keyboard up, Back first closes it: that counts as cancelling, so one Back is enough.
@@ -170,7 +174,7 @@ private fun BoxScope.SearchBand(
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = {
-                results = hiddenApps.filter { AppMatch.matches(query, it.label) }.sortedBy { it.label.lowercase() }
+                results = candidates.filter { AppMatch.matches(query, labelOf(it)) }.sortedBy { labelOf(it).lowercase() }
             }),
             decorationBox = { field ->
                 Box(contentAlignment = Alignment.Center) {

@@ -20,9 +20,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -31,6 +38,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +53,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.lock.LockState
 import com.fabiantorrestech.lockmyphone_extended.data.PhoneButton
 import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
 import com.fabiantorrestech.lockmyphone_extended.ui.AppIcon
+import com.fabiantorrestech.lockmyphone_extended.ui.AppIconSize
 import com.fabiantorrestech.lockmyphone_extended.ui.AppInfoMenu
 import com.fabiantorrestech.lockmyphone_extended.ui.ExitButton
 import com.fabiantorrestech.lockmyphone_extended.ui.FastScrollbar
@@ -109,14 +118,19 @@ class PassActivity : ComponentActivity() {
         }
         // The dialer is in the session's allowed apps too, but it already has its own Phone row.
         val dialer = container.appCatalog.defaultDialerPackage()
-        val apps = state.session.allowedPackages
+        val listedApps = state.session.allowedPackages
             .filter { it != dialer && it !in state.session.hiddenPackages }
             .map { LaunchableApp(it, container.appCatalog.label(it)) }
-            .sortedBy { it.label.lowercase() }
-        // Hidden allowed apps: never listed, only found by the search below (Enter, near-exact name).
-        val hiddenApps = state.session.allowedPackages
+        // A synced profile's folders and order; otherwise every listed app on its own, A–Z.
+        val entries = PickerEntries.build(listedApps, state.session.pickerLayout)
+        val folders = entries.filterIsInstance<PickerEntry.Folder>()
+        // Never listed, only found by the search below (Enter, near-exact name): hidden allowed
+        // apps, the apps of search-only folders, and folders by their name.
+        val searchable: List<PickerEntry> = state.session.allowedPackages
             .filter { it != dialer && it in state.session.hiddenPackages }
-            .map { LaunchableApp(it, container.appCatalog.label(it)) }
+            .map { PickerEntry.App(LaunchableApp(it, container.appCatalog.label(it))) } +
+            folders.filter { !it.folder.shown }.flatMap { it.folder.apps }.map(PickerEntry::App) +
+            folders
         // App info lists every allowed app, hidden ones and the dialer included.
         val appInfoApps = state.session.allowedPackages
             .map { LaunchableApp(it, container.appCatalog.label(it)) }
@@ -136,8 +150,16 @@ class PassActivity : ComponentActivity() {
                 // Back goes to the countdown screen instead of the home screen (which would relock).
                 BackHandler { openCountdown() }
                 val listState = rememberLazyListState()
+                val scope = rememberCoroutineScope()
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     var searching by remember { mutableStateOf(false) }
+                    // Folders start closed each time this screen opens (after opening an app, or a relock).
+                    var openFolders by remember { mutableStateOf(emptySet<String>()) }
+                    var revealedFolders by remember { mutableStateOf(emptySet<String>()) }
+                    val rows = PickerEntries.rows(entries, openFolders, revealedFolders)
+                    val toggleFolder = { name: String ->
+                        openFolders = if (name in openFolders) openFolders - name else openFolders + name
+                    }
                     // Consumed, so the search's keyboard padding doesn't count the gesture bar twice.
                     Column(
                         Modifier
@@ -181,6 +203,47 @@ class PassActivity : ComponentActivity() {
                             container.appCatalog.launchIntent(app.packageName)?.let(::launch)
                             finish()
                         }
+                        val refreshable = container.notifications.isRefreshable(state.session)
+                        // Rows above the apps: the spacer, the Phone row, the Refresh button.
+                        val rowsBefore = 1 + (if (phoneCorner == null) 1 else 0) + (if (refreshable) 1 else 0)
+                        val appRow = @Composable { app: LaunchableApp, indent: Boolean ->
+                            ListItem(
+                                leadingContent = if (showIcons) {
+                                    { AppIcon(app.packageName, container.appCatalog) }
+                                } else {
+                                    null
+                                },
+                                headlineContent = { appName(app.label) },
+                                modifier = Modifier
+                                    .clickable { openApp(app) }
+                                    .padding(start = if (indent) FolderIndent else 0.dp),
+                            )
+                        }
+                        val folderRow = @Composable { folder: PickerFolder, open: Boolean, onClick: () -> Unit ->
+                            ListItem(
+                                leadingContent = if (showIcons) {
+                                    {
+                                        Icon(
+                                            if (open) Icons.Outlined.FolderOpen else Icons.Outlined.Folder,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(AppIconSize),
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                                headlineContent = { appName(folder.name) },
+                                trailingContent = {
+                                    Icon(
+                                        if (open) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                        contentDescription = stringResource(
+                                            if (open) R.string.picker_folder_close else R.string.picker_folder_open,
+                                        ),
+                                    )
+                                },
+                                modifier = Modifier.clickable(onClick = onClick),
+                            )
+                        }
                         Box(Modifier.weight(1f).fillMaxWidth()) {
                             LazyColumn(
                                 state = listState,
@@ -205,7 +268,7 @@ class PassActivity : ComponentActivity() {
                                     )
                                 }
                                 // A place's lock: check right here whether you've left, without going back.
-                                if (container.notifications.isRefreshable(state.session)) {
+                                if (refreshable) {
                                     item {
                                         val refresh by container.placeRefresher.state.collectAsState()
                                         Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -215,38 +278,41 @@ class PassActivity : ComponentActivity() {
                                         }
                                     }
                                 }
-                                items(apps, key = { it.packageName }, contentType = { "app" }) { app ->
-                                    ListItem(
-                                        leadingContent = if (showIcons) {
-                                            { AppIcon(app.packageName, container.appCatalog) }
-                                        } else {
-                                            null
-                                        },
-                                        headlineContent = { appName(app.label) },
-                                        modifier = Modifier.clickable { openApp(app) },
-                                    )
+                                items(
+                                    rows,
+                                    key = { it.key },
+                                    contentType = { if (it is PickerRow.FolderRow) "folder" else "app" },
+                                ) { row ->
+                                    when (row) {
+                                        is PickerRow.AppRow -> appRow(row.app, row.folderName != null)
+                                        is PickerRow.FolderRow -> folderRow(row.folder, row.open) { toggleFolder(row.folder.name) }
+                                    }
                                 }
                             }
                             FastScrollbar(listState, Modifier.align(Alignment.CenterEnd))
                             phoneCorner?.let { CornerPhoneButton(it, onDial = dial) }
-                            // Hidden allowed apps: never listed, only found by this search (Enter, near-exact name).
-                            if (hiddenApps.isNotEmpty()) {
+                            if (searchable.isNotEmpty()) {
                                 CornerSearch(
                                     corner = if (phoneCorner == Alignment.BottomStart) Alignment.BottomEnd else Alignment.BottomStart,
                                     faintIcon = pickerStyle.faintSearchIcon,
-                                    hiddenApps = hiddenApps,
+                                    candidates = searchable,
+                                    labelOf = { it.label },
                                     searching = searching,
                                     onSearchingChange = { searching = it },
-                                ) { app ->
-                                    ListItem(
-                                        leadingContent = if (showIcons) {
-                                            { AppIcon(app.packageName, container.appCatalog) }
-                                        } else {
-                                            null
-                                        },
-                                        headlineContent = { appName(app.label) },
-                                        modifier = Modifier.clickable { openApp(app) },
-                                    )
+                                ) { match ->
+                                    when (match) {
+                                        is PickerEntry.App -> appRow(match.app, false)
+                                        // A found folder opens in the list (a search-only one appears there).
+                                        is PickerEntry.Folder -> folderRow(match.folder, false) {
+                                            val name = match.folder.name
+                                            openFolders = openFolders + name
+                                            revealedFolders = revealedFolders + name
+                                            searching = false
+                                            val index = PickerEntries.rows(entries, openFolders, revealedFolders)
+                                                .indexOfFirst { it.key == match.key }
+                                            if (index >= 0) scope.launch { listState.animateScrollToItem(rowsBefore + index) }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -303,6 +369,8 @@ class PassActivity : ComponentActivity() {
     }
 
     companion object {
+        /** How far a folder's apps sit in from the folder row. */
+        private val FolderIndent = 24.dp
         private const val EXTRA_PACKAGE = "package"
         private const val EXTRA_DIAL = "dial"
         private const val EXTRA_FROM_REDIRECT = "from_redirect"

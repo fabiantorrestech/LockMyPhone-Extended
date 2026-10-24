@@ -81,6 +81,7 @@ class LockEngine {
      * @param bypassDelayMs the early-unlock wait, or null if early unlock isn't allowed.
      * @param hiddenPackages allowed apps left out of the lock-screen list.
      * @param options the global "During a lock" settings.
+     * @param pickerLayout the allowed-apps list's folders and row order.
      */
     fun start(
         current: LockState,
@@ -99,6 +100,7 @@ class LockEngine {
         options: GlobalLockOptions = GlobalLockOptions(),
         restartOwn: Boolean = false,
         limit: LimitPolicy? = null,
+        pickerLayout: PickerLayout = PickerLayout.NONE,
     ): StartDecision {
         require(durationMs > 0) { "durationMs must be positive" }
         require(bypassDelayMs == null || bypassDelayMs > 0) { "bypassDelayMs must be positive" }
@@ -123,6 +125,7 @@ class LockEngine {
                 unlockIntoAllowedApp = options.unlockIntoAllowedApp,
                 popupPackages = options.popupPackages,
                 limit = limit,
+                pickerLayout = pickerLayout,
             )
         )
         // A lock whose time is up counts as over, even before its end alarm has run.

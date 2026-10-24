@@ -101,7 +101,7 @@
     <string name="notif_action_more">More…</string>
     <string name="picker_title">Allowed apps</string>
     <string name="picker_search_hint">Type a hidden app\'s name, then Enter</string>
-    <string name="picker_search_none">No match. Type the app\'s exact name.</string>
+    <string name="picker_search_none">No match. Type the exact name.</string>
     <string name="pass_refused">That app is not allowed during this lock.</string>
     <string name="pass_app_missing">That app cannot be opened.</string>
 
@@ -297,6 +297,8 @@
     <string name="picker_faint_search">Show the hidden-app search icon faintly</string>
     <string name="picker_faint_search_off">Off: the icon is invisible; tap its bottom corner.</string>
     <string name="picker_search_open">Search hidden apps</string>
+    <string name="picker_folder_open">Open folder</string>
+    <string name="picker_folder_close">Close folder</string>
     <string name="during_lock_title">During a lock</string>
     <string name="home_action_title">Home opens…</string>
     <string name="home_action_allowed_apps">Allowed apps</string>

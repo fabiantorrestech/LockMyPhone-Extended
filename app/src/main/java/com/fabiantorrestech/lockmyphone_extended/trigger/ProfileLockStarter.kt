@@ -54,6 +54,7 @@ class ProfileLockStarter(
             options = globalOptions(),
             restartOwn = restartOwn,
             limit = profile.limitPolicy,
+            pickerLayout = profile.pickerLayout,
         )
     }
 

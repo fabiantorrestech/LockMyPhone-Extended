@@ -51,6 +51,7 @@ class LockStateStore(context: Context) {
                     putBoolean(KEY_UNLOCK_INTO_ALLOWED_APP, state.session.unlockIntoAllowedApp)
                     putStringSet(KEY_POPUP_PACKAGES, state.session.popupPackages)
                     putLimit(state.session.limit, state.session.limitState)
+                    putString(KEY_PICKER_LAYOUT, PickerLayoutJson.write(state.session.pickerLayout))
                 }
             }
         }
@@ -91,6 +92,8 @@ class LockStateStore(context: Context) {
                 popupPackages = prefs.getStringSet(KEY_POPUP_PACKAGES, null)?.toSet() ?: emptySet(),
                 limit = readLimit(),
                 limitState = readLimitState(),
+                // Locks saved before 0.11.2 have none.
+                pickerLayout = PickerLayoutJson.read(prefs.getString(KEY_PICKER_LAYOUT, null)),
             )
         )
     }
@@ -186,6 +189,7 @@ class LockStateStore(context: Context) {
         const val KEY_HOME_ACTION = "home_action"
         const val KEY_UNLOCK_INTO_ALLOWED_APP = "unlock_into_allowed_app"
         const val KEY_POPUP_PACKAGES = "popup_packages"
+        const val KEY_PICKER_LAYOUT = "picker_layout"
         const val KEY_LIMIT_SESSION = "limit_session_ms"
         const val KEY_LIMIT_FIRST_COOLDOWN = "limit_first_cooldown_ms"
         const val KEY_LIMIT_COOLDOWN_STEP = "limit_cooldown_step_ms"

@@ -7,6 +7,7 @@ import androidx.room.PrimaryKey
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LimitPolicy
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
+import com.fabiantorrestech.lockmyphone_extended.core.lock.PickerLayout
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 
 /**
@@ -36,6 +37,8 @@ import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
  * @param limitCooldownMinutes the first cooldown; each later one is [limitCooldownStepMinutes]
  *   longer, up to [limitMaxCooldownMinutes].
  * @param limitPeekSeconds a shorter session is a peek (no cooldown), [limitPeekCount] times a lock.
+ * @param pickerLayout a synced profile's folders and row order on the allowed-apps list (sent by
+ *   its [managedBy] app); none for your own profiles. Added in DB version 29.
  */
 @Entity(tableName = "profiles", indices = [Index(value = ["name"], unique = true)])
 data class LockProfile(
@@ -64,6 +67,7 @@ data class LockProfile(
     @ColumnInfo(defaultValue = "10") val limitMaxCooldownMinutes: Int = 10,
     @ColumnInfo(defaultValue = "30") val limitPeekSeconds: Int = 30,
     @ColumnInfo(defaultValue = "3") val limitPeekCount: Int = 3,
+    @ColumnInfo(defaultValue = "") val pickerLayout: PickerLayout = PickerLayout.NONE,
 ) {
     val bypassDelayMs: Long? get() = if (bypassEnabled) bypassWaitMinutes * 60_000L else null
 

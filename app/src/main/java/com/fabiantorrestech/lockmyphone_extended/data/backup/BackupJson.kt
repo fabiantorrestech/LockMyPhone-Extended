@@ -4,6 +4,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.lock.QUICK_LOCK_ID
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 import com.fabiantorrestech.lockmyphone_extended.core.lock.HomeAction
+import com.fabiantorrestech.lockmyphone_extended.core.lock.PickerLayoutJson
 import com.fabiantorrestech.lockmyphone_extended.data.BypassDefaults
 import com.fabiantorrestech.lockmyphone_extended.data.FontChoice
 import com.fabiantorrestech.lockmyphone_extended.data.LockDefaults
@@ -276,7 +277,7 @@ object BackupJson {
         put("lockStyle", p.lockStyle.name); put("limitSessionMinutes", p.limitSessionMinutes)
         put("limitCooldownMinutes", p.limitCooldownMinutes); put("limitCooldownStepMinutes", p.limitCooldownStepMinutes)
         put("limitMaxCooldownMinutes", p.limitMaxCooldownMinutes); put("limitPeekSeconds", p.limitPeekSeconds)
-        put("limitPeekCount", p.limitPeekCount)
+        put("limitPeekCount", p.limitPeekCount); put("pickerLayout", PickerLayoutJson.write(p.pickerLayout))
     }
 
     private fun profileFromJson(o: JSONObject) = LockProfile(
@@ -293,6 +294,7 @@ object BackupJson {
         limitSessionMinutes = o.optInt("limitSessionMinutes", 5), limitCooldownMinutes = o.optInt("limitCooldownMinutes", 2),
         limitCooldownStepMinutes = o.optInt("limitCooldownStepMinutes", 1), limitMaxCooldownMinutes = o.optInt("limitMaxCooldownMinutes", 10),
         limitPeekSeconds = o.optInt("limitPeekSeconds", 30), limitPeekCount = o.optInt("limitPeekCount", 3),
+        pickerLayout = PickerLayoutJson.read(o.optString("pickerLayout")),
     )
 
     private fun scheduleToJson(s: LockSchedule) = JSONObject().apply {
