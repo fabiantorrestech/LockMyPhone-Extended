@@ -114,8 +114,10 @@ data class LimitState(
  *   a pass instead of relocking, e.g. after tapping an allowed app's notification on the lock screen.
  * @param popupPackages apps whose non-activity windows (popups, bubbles, overlays) may show over an
  *   allowed app. Their own screens still relock.
- * @param limit a Limited lock's sessions and cooldowns, or null for a normal lock.
- * @param limitState where that Limited lock is.
+ * @param limit the sessions and cooldowns of a Limited or Timed apps lock, or null for a normal lock.
+ * @param limitState where a Limited lock is.
+ * @param timedApps a Timed apps lock's untimed apps and banks; null for any other lock.
+ * @param bankStates where each bank of a Timed apps lock is, by bank name.
  * @param pickerLayout the allowed-apps list's folders and row order (a synced profile's); display
  *   only, enforcement uses [allowedPackages].
  */
@@ -142,6 +144,8 @@ data class LockSession(
     val limit: LimitPolicy? = null,
     val limitState: LimitState = LimitState(),
     val pickerLayout: PickerLayout = PickerLayout.NONE,
+    val timedApps: TimedApps? = null,
+    val bankStates: Map<String, LimitState> = emptyMap(),
 ) {
     val bypassAllowed: Boolean get() = bypassDelayMs != null
     val bypassPending: Boolean get() = bypassEndsAtMs != null
@@ -149,8 +153,24 @@ data class LockSession(
     /** When the lock actually ends: the scheduled end, or a pending early unlock if sooner. */
     val effectiveEndMs: Long get() = minOf(endsAtMs, bypassEndsAtMs ?: Long.MAX_VALUE)
 
+    /** An Unlimited lock ([UNLIMITED_MS]): only an early unlock ends it. */
+    val unlimited: Boolean get() = endsAtMs - startedAtMs >= UNLIMITED_MS
+
+    /** No end shown yet: an Unlimited lock with no early unlock under way. */
+    val noEndInSight: Boolean get() = unlimited && !bypassPending
+
     companion object {
         const val DEFAULT_UNLOCK_CHOICE_SECONDS = 3
+
+        /**
+         * The length of an Unlimited lock, which only an early unlock ends: about 31 years. A real
+         * length rather than a special value, so every rule that adds or compares times still works.
+         */
+        const val UNLIMITED_SEC = 1_000_000_000L
+        const val UNLIMITED_MS = UNLIMITED_SEC * 1_000
+
+        /** An Unlimited lock's early-unlock wait when its settings had early unlock off. */
+        const val UNLIMITED_BYPASS_MS = 10 * 60_000L
     }
 }
 

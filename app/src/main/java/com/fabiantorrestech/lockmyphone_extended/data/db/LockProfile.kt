@@ -8,6 +8,8 @@ import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LimitPolicy
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
 import com.fabiantorrestech.lockmyphone_extended.core.lock.PickerLayout
+import com.fabiantorrestech.lockmyphone_extended.core.lock.TimeBank
+import com.fabiantorrestech.lockmyphone_extended.core.lock.TimedApps
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 
 /**
@@ -39,6 +41,10 @@ import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
  * @param limitPeekSeconds a shorter session is a peek (no cooldown), [limitPeekCount] times a lock.
  * @param pickerLayout a synced profile's folders and row order on the allowed-apps list (sent by
  *   its [managedBy] app); none for your own profiles. Added in DB version 29.
+ * @param untimedPackages with [LockStyle.TIMED_APPS], allowed apps that never count. Added with
+ *   [timeBanks] in DB version 30.
+ * @param timeBanks with [LockStyle.TIMED_APPS], groups of timed apps with their own sessions and
+ *   cooldowns; the other timed apps share one.
  */
 @Entity(tableName = "profiles", indices = [Index(value = ["name"], unique = true)])
 data class LockProfile(
@@ -68,12 +74,14 @@ data class LockProfile(
     @ColumnInfo(defaultValue = "30") val limitPeekSeconds: Int = 30,
     @ColumnInfo(defaultValue = "3") val limitPeekCount: Int = 3,
     @ColumnInfo(defaultValue = "") val pickerLayout: PickerLayout = PickerLayout.NONE,
+    @ColumnInfo(defaultValue = "") val untimedPackages: Set<String> = emptySet(),
+    @ColumnInfo(defaultValue = "") val timeBanks: List<TimeBank> = emptyList(),
 ) {
     val bypassDelayMs: Long? get() = if (bypassEnabled) bypassWaitMinutes * 60_000L else null
 
-    /** A Limited lock's sessions and cooldowns, or null for a normal one. */
+    /** A Limited or Timed apps lock's sessions and cooldowns, or null for a normal one. */
     val limitPolicy: LimitPolicy?
-        get() = if (lockStyle != LockStyle.LIMITED) null else LimitPolicy(
+        get() = if (lockStyle == LockStyle.LOCKED) null else LimitPolicy(
             sessionMs = limitSessionMinutes * 60_000L,
             firstCooldownMs = limitCooldownMinutes * 60_000L,
             cooldownStepMs = limitCooldownStepMinutes * 60_000L,
@@ -81,6 +89,10 @@ data class LockProfile(
             peekMs = limitPeekSeconds * 1_000L,
             peekCount = limitPeekCount,
         )
+
+    /** A Timed apps lock's untimed apps and banks, or null for any other style. */
+    val timedApps: TimedApps?
+        get() = if (lockStyle != LockStyle.TIMED_APPS) null else TimedApps(untimedPackages, timeBanks)
 }
 
 /** How strict a profile's lock is. */
@@ -90,4 +102,7 @@ enum class LockStyle {
 
     /** Any app, in short sessions, each followed by a growing cooldown ([LimitPolicy]). */
     LIMITED,
+
+    /** Only the allowed apps, in short sessions with growing cooldowns ([TimedApps]). */
+    TIMED_APPS,
 }

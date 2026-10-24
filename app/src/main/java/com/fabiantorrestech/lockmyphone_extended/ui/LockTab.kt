@@ -152,6 +152,7 @@ private fun QuickLockCard(quickLock: LockSettings, presetsSec: List<Long>, admin
                 presetsSec = presetsSec,
                 selectedMs = durationMs,
                 onPick = { actions.onQuickSettingsChange(quickLock.copy(durationSec = it / 1_000)) },
+                withNoEnd = true,
             )
             Text(
                 quickSummary(context, quickLock),

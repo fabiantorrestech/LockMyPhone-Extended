@@ -4,6 +4,8 @@ import android.content.Context
 import android.database.Cursor
 import com.fabiantorrestech.lockmyphone_extended.core.lock.PickerLayout
 import com.fabiantorrestech.lockmyphone_extended.core.lock.PickerLayoutJson
+import com.fabiantorrestech.lockmyphone_extended.core.lock.TimeBank
+import com.fabiantorrestech.lockmyphone_extended.core.lock.TimedAppsJson
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Delete
@@ -444,12 +446,18 @@ class Converters {
 
     @TypeConverter
     fun toPickerLayout(value: String): PickerLayout = PickerLayoutJson.read(value)
+
+    @TypeConverter
+    fun fromTimeBanks(banks: List<TimeBank>): String = if (banks.isEmpty()) "" else TimedAppsJson.writeBanks(banks)
+
+    @TypeConverter
+    fun toTimeBanks(value: String): List<TimeBank> = TimedAppsJson.readBanks(value)
 }
 
 /** See ADR 0003: kept in device-protected storage so receivers can read it before the first unlock. */
 @Database(
     entities = [LockProfile::class, LockSchedule::class, AlarmTrigger::class, LocationTrigger::class, LocationSlot::class, CalendarTrigger::class, NfcTag::class, BeaconName::class, WakeTrigger::class],
-    version = 29,
+    version = 30,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -473,7 +481,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.createDeviceProtectedStorageContext(),
                 AppDatabase::class.java,
                 NAME,
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29).build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30).build()
 
         /** v2: profiles gain a Do Not Disturb switch (off for existing profiles). */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -671,6 +679,14 @@ abstract class AppDatabase : RoomDatabase() {
          * harder router) becomes a one-network list; the old columns stay, unused.
          */
         /** v28: a profile can be a Limited lock: short sessions with growing cooldowns. */
+        /** v30: the Timed apps lock style's untimed apps and time banks. */
+        private val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE profiles ADD COLUMN untimedPackages TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE profiles ADD COLUMN timeBanks TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         /** v29: a synced profile's folders and row order on the allowed-apps list (ABB's essentials). */
         private val MIGRATION_28_29 = object : Migration(28, 29) {
             override fun migrate(db: SupportSQLiteDatabase) {

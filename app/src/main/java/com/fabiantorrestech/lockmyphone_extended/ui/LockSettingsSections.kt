@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.fabiantorrestech.lockmyphone_extended.R
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.isGrayscaleSupported
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.labelRes
@@ -83,7 +84,15 @@ fun LockSettingsSections(
             selectedMs = settings.durationSec * 1_000,
             onPick = { onChange(settings.copy(durationSec = it / 1_000)) },
             modifier = SectionContentPadding,
+            withNoEnd = true,
         )
+        if (settings.durationSec >= LockSession.UNLIMITED_SEC) {
+            Text(
+                stringResource(R.string.unlimited_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = SectionContentPadding,
+            )
+        }
     }
 
     SettingsSection(stringResource(R.string.allowed_title)) {
@@ -181,7 +190,8 @@ fun LockSettingsSections(
     when (editing) {
         LockDialog.LENGTH -> DurationDialog(
             title = lengthTitle,
-            initialMs = settings.durationSec * 1_000,
+            // An Unlimited lock has no hours to edit: start from an hour.
+            initialMs = if (settings.durationSec >= LockSession.UNLIMITED_SEC) 3_600_000L else settings.durationSec * 1_000,
             presetsSec = presetsSec,
             onConfirm = {
                 onChange(settings.copy(durationSec = it / 1_000))

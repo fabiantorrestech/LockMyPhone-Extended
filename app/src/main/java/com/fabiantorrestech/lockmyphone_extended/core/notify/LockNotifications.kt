@@ -12,6 +12,7 @@ import com.fabiantorrestech.lockmyphone_extended.MainActivity
 import com.fabiantorrestech.lockmyphone_extended.R
 import com.fabiantorrestech.lockmyphone_extended.bypass.BypassActionReceiver
 import com.fabiantorrestech.lockmyphone_extended.core.apps.AppCatalog
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LimitPolicy
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
 import com.fabiantorrestech.lockmyphone_extended.pass.PassActivity
 import java.text.DateFormat
@@ -77,10 +78,10 @@ class LockNotifications(
     fun buildStatus(session: LockSession, passesAvailable: Boolean): Notification {
         val endMs = session.effectiveEndMs
         val endTime = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(endMs))
-        val title = if (session.bypassPending) {
-            context.getString(R.string.notif_bypass_pending_title, endTime)
-        } else {
-            context.getString(R.string.notif_status_title, endTime)
+        val title = when {
+            session.bypassPending -> context.getString(R.string.notif_bypass_pending_title, endTime)
+            session.unlimited -> context.getString(R.string.notif_unlimited_title)
+            else -> context.getString(R.string.notif_status_title, endTime)
         }
         val refreshable = isRefreshable(session)
         val note = refreshNote?.takeIf { refreshable && it.lockStartedAtMs == session.startedAtMs }?.text
@@ -94,8 +95,9 @@ class LockNotifications(
             .setContentTitle(title)
             .setContentText(text)
             .setWhen(endMs)
-            .setShowWhen(true)
-            .setUsesChronometer(true)
+            // An Unlimited lock has no end to count down to, until an early unlock starts.
+            .setShowWhen(!session.noEndInSight)
+            .setUsesChronometer(!session.noEndInSight)
             .setChronometerCountDown(true)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -156,6 +158,7 @@ class LockNotifications(
     /** Where a Limited lock is, for the notification: a session open, a cooldown, or ready. */
     private fun limitNote(session: LockSession): String? {
         val limit = session.limit ?: return null
+        if (session.timedApps != null) return timedNote(session, limit)
         val limitState = session.limitState
         val cooldownEnd = limitState.cooldownEndsAtMs?.takeIf { it > System.currentTimeMillis() }
         return when {
@@ -165,6 +168,20 @@ class LockNotifications(
                 DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(cooldownEnd)),
             )
             else -> context.getString(R.string.notif_limit_ready, (limit.sessionMs / 60_000).toInt())
+        }
+    }
+
+    /** Where a Timed apps lock is: a session counting, the soonest cooldown's end, or ready. */
+    private fun timedNote(session: LockSession, limit: LimitPolicy): String {
+        val now = System.currentTimeMillis()
+        val cooldownEnd = session.bankStates.values.mapNotNull { it.cooldownEndsAtMs?.takeIf { end -> end > now } }.minOrNull()
+        return when {
+            session.bankStates.values.any { it.countingSinceMs != null } -> context.getString(R.string.notif_timed_session)
+            cooldownEnd != null -> context.getString(
+                R.string.notif_timed_cooldown,
+                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(cooldownEnd)),
+            )
+            else -> context.getString(R.string.notif_timed_ready, (limit.sessionMs / 60_000).toInt())
         }
     }
 

@@ -55,6 +55,8 @@ class ProfileLockStarter(
             restartOwn = restartOwn,
             limit = profile.limitPolicy,
             pickerLayout = profile.pickerLayout,
+            // The phone is never timed.
+            timedApps = profile.timedApps?.let { it.copy(untimed = it.untimed + setOfNotNull(appCatalog.defaultDialerPackage())) },
         )
     }
 

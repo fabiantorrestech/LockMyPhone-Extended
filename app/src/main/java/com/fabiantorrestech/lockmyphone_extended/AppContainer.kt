@@ -36,6 +36,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.apps.AppCatalog
 import com.fabiantorrestech.lockmyphone_extended.core.diag.ForegroundLog
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndController
 import com.fabiantorrestech.lockmyphone_extended.core.enforce.ForegroundPolicy
+import com.fabiantorrestech.lockmyphone_extended.core.enforce.LockAccessibilityService
 import com.fabiantorrestech.lockmyphone_extended.core.enforce.Relocker
 import com.fabiantorrestech.lockmyphone_extended.core.lock.GlobalLockOptions
 import com.fabiantorrestech.lockmyphone_extended.core.lock.HomeAction
@@ -235,6 +236,7 @@ class AppContainer(context: Context) {
             if (ended.source.kind == LockKind.SCHEDULE) appScope.launch { scheduleScheduler.suppressActiveWindow() }
         }
         lockController.nfcGateSeconds = nfcTagHandler::gateSeconds
+        lockController.showsTimeLeftOnScreen = { LockAccessibilityService.isRunning && settingsStore.showTimeLeft.value }
         // Read from device-protected storage, so the button shows before the first unlock too.
         notifications.isRefreshable = { session ->
             session.source.kind == LockKind.PLACE && session.source.ownerId?.let(locationStateStore::endsOnLeave) == true

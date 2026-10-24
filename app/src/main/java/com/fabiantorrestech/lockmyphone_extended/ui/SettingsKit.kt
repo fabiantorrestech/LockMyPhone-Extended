@@ -53,6 +53,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.WindowInsets
 import com.fabiantorrestech.lockmyphone_extended.R
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
 
 /*
  * Building blocks for the settings-style editors (profile, Lock defaults, Quick lock, schedule,
@@ -282,10 +283,17 @@ fun RadioSettingsRow(title: String, summary: String?, selected: Boolean, onSelec
 /** One-tap lock lengths. The chip matching [selectedMs] is shown selected. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun DurationPresetChips(presetsSec: List<Long>, selectedMs: Long?, onPick: (Long) -> Unit, modifier: Modifier = Modifier) {
-    if (presetsSec.isEmpty()) return
+fun DurationPresetChips(
+    presetsSec: List<Long>,
+    selectedMs: Long?,
+    onPick: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+    /** Adds "∞ No end" (an Unlimited lock) after the presets. */
+    withNoEnd: Boolean = false,
+) {
+    if (presetsSec.isEmpty() && !withNoEnd) return
     FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        presetsSec.forEach { seconds ->
+        (presetsSec + listOfNotNull(LockSession.UNLIMITED_SEC.takeIf { withNoEnd })).forEach { seconds ->
             FilterChip(
                 selected = selectedMs == seconds * 1_000,
                 onClick = { onPick(seconds * 1_000) },
@@ -297,6 +305,7 @@ fun DurationPresetChips(presetsSec: List<Long>, selectedMs: Long?, onPick: (Long
 
 /** "15m", "1h", "1h 30m", "45s". */
 fun formatPresetLabel(seconds: Long): String {
+    if (seconds >= LockSession.UNLIMITED_SEC) return "∞ No end"
     val h = seconds / 3600
     val m = (seconds % 3600) / 60
     val s = seconds % 60

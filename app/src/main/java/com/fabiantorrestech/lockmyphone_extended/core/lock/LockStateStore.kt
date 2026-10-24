@@ -52,6 +52,8 @@ class LockStateStore(context: Context) {
                     putStringSet(KEY_POPUP_PACKAGES, state.session.popupPackages)
                     putLimit(state.session.limit, state.session.limitState)
                     putString(KEY_PICKER_LAYOUT, PickerLayoutJson.write(state.session.pickerLayout))
+                    putString(KEY_TIMED_APPS, TimedAppsJson.write(state.session.timedApps))
+                    putString(KEY_BANK_STATES, TimedAppsJson.writeStates(state.session.bankStates))
                 }
             }
         }
@@ -94,6 +96,9 @@ class LockStateStore(context: Context) {
                 limitState = readLimitState(),
                 // Locks saved before 0.11.2 have none.
                 pickerLayout = PickerLayoutJson.read(prefs.getString(KEY_PICKER_LAYOUT, null)),
+                // Locks saved before 0.12.0 aren't Timed apps locks.
+                timedApps = TimedAppsJson.read(prefs.getString(KEY_TIMED_APPS, null)),
+                bankStates = TimedAppsJson.readStates(prefs.getString(KEY_BANK_STATES, null)),
             )
         )
     }
@@ -190,6 +195,8 @@ class LockStateStore(context: Context) {
         const val KEY_UNLOCK_INTO_ALLOWED_APP = "unlock_into_allowed_app"
         const val KEY_POPUP_PACKAGES = "popup_packages"
         const val KEY_PICKER_LAYOUT = "picker_layout"
+        const val KEY_TIMED_APPS = "timed_apps"
+        const val KEY_BANK_STATES = "bank_states"
         const val KEY_LIMIT_SESSION = "limit_session_ms"
         const val KEY_LIMIT_FIRST_COOLDOWN = "limit_first_cooldown_ms"
         const val KEY_LIMIT_COOLDOWN_STEP = "limit_cooldown_step_ms"

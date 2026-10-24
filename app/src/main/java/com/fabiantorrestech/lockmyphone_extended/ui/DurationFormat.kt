@@ -1,6 +1,10 @@
 package com.fabiantorrestech.lockmyphone_extended.ui
 
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
 import java.util.Locale
+
+/** An Unlimited lock's length, next to "50 min" and "9 h". */
+private const val NO_END = "No end"
 
 private const val MS_PER_SECOND = 1_000L
 
@@ -22,6 +26,7 @@ fun formatDurationLabel(durationMs: Long): String {
 
 /** "50 min", "9 h", "1 h 30 min": a length to read at a glance (the H:M:S form is for editing). */
 fun formatLengthLabel(durationMs: Long): String {
+    if (durationMs >= LockSession.UNLIMITED_MS) return NO_END
     val totalSeconds = ceilSeconds(durationMs)
     val h = totalSeconds / 3600
     val m = (totalSeconds % 3600) / 60

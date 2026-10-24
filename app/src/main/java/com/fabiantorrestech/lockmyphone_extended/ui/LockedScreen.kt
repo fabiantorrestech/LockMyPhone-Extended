@@ -84,11 +84,17 @@ fun LockedScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(stringResource(R.string.locked_title), style = MaterialTheme.typography.headlineMedium)
-            Text(
-                formatDurationClock(endMs - now),
-                style = MaterialTheme.typography.displayMedium,
-            )
-            Text(stringResource(R.string.locked_until, endTime))
+            if (session.noEndInSight) {
+                // An Unlimited lock: nothing to count down until an early unlock starts.
+                Text(stringResource(R.string.unlimited_no_end), style = MaterialTheme.typography.displayMedium)
+                Text(stringResource(R.string.unlimited_until_early))
+            } else {
+                Text(
+                    formatDurationClock(endMs - now),
+                    style = MaterialTheme.typography.displayMedium,
+                )
+                Text(stringResource(R.string.locked_until, endTime))
+            }
             // A Limited lock's cooldown: when the next session can start.
             session.limitState.cooldownEndsAtMs?.takeIf { it > now }?.let { next ->
                 Text(
@@ -96,6 +102,20 @@ fun LockedScreen(
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
+            }
+            // A Timed apps lock: each time bank that's cooling down.
+            session.bankStates.forEach { (bank, state) ->
+                state.cooldownEndsAtMs?.takeIf { it > now }?.let { next ->
+                    Text(
+                        stringResource(
+                            R.string.locked_timed_cooldown,
+                            bank.ifEmpty { stringResource(R.string.timed_shared_name) },
+                            DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(next)),
+                        ),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
             if (nfcGate) {
                 Text(

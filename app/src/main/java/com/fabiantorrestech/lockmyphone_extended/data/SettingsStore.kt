@@ -124,6 +124,36 @@ class SettingsStore(context: Context) {
         _showAppIcons.value = show
     }
 
+    /** Whether a Limited or Timed apps session shows its time left over the app in front. */
+    private val _showTimeLeft = MutableStateFlow(prefs.getBoolean(KEY_SHOW_TIME_LEFT, true))
+    val showTimeLeft: StateFlow<Boolean> = _showTimeLeft.asStateFlow()
+
+    /** Pro: the time-left clock in its larger size. */
+    private val _timeLeftLarge = MutableStateFlow(prefs.getBoolean(KEY_TIME_LEFT_LARGE, false))
+    val timeLeftLarge: StateFlow<Boolean> = _timeLeftLarge.asStateFlow()
+
+    fun setShowTimeLeft(show: Boolean) {
+        prefs.edit { putBoolean(KEY_SHOW_TIME_LEFT, show) }
+        _showTimeLeft.value = show
+    }
+
+    fun setTimeLeftLarge(large: Boolean) {
+        prefs.edit { putBoolean(KEY_TIME_LEFT_LARGE, large) }
+        _timeLeftLarge.value = large
+    }
+
+    /** Where the time-left clock was dragged to (from the top right corner, in pixels), or null for its default place. */
+    fun timeLeftOffset(): Pair<Int, Int>? =
+        if (prefs.contains(KEY_TIME_LEFT_X)) prefs.getInt(KEY_TIME_LEFT_X, 0) to prefs.getInt(KEY_TIME_LEFT_Y, 0) else null
+
+    fun setTimeLeftOffset(x: Int, y: Int) {
+        prefs.edit { putInt(KEY_TIME_LEFT_X, x); putInt(KEY_TIME_LEFT_Y, y) }
+    }
+
+    fun resetTimeLeftOffset() {
+        prefs.edit { remove(KEY_TIME_LEFT_X); remove(KEY_TIME_LEFT_Y) }
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         prefs.edit { putString(KEY_THEME_MODE, mode.name) }
         _themeMode.value = mode
@@ -699,6 +729,10 @@ class SettingsStore(context: Context) {
         const val KEY_DEFAULT_RESUME_MODE = "default_resume_mode"
         const val KEY_DEFAULT_CHOICE_SECONDS = "default_choice_seconds"
         const val KEY_SHOW_APP_ICONS = "show_app_icons"
+        const val KEY_SHOW_TIME_LEFT = "show_time_left"
+        const val KEY_TIME_LEFT_LARGE = "time_left_large"
+        const val KEY_TIME_LEFT_X = "time_left_x"
+        const val KEY_TIME_LEFT_Y = "time_left_y"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_UI_MODE = "ui_mode"
         const val KEY_POPUP_PACKAGES = "popup_packages"

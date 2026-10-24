@@ -164,6 +164,7 @@ import com.fabiantorrestech.lockmyphone_extended.ui.QuickLockOptionsScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.SetupAssistantScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.SetupResult
 import com.fabiantorrestech.lockmyphone_extended.ui.RelockUi
+import com.fabiantorrestech.lockmyphone_extended.ui.TimeLeftUi
 import com.fabiantorrestech.lockmyphone_extended.data.EssentialApps
 import com.fabiantorrestech.lockmyphone_extended.data.Situation
 import androidx.compose.runtime.CompositionLocalProvider
@@ -944,6 +945,13 @@ class MainActivity : ComponentActivity() {
                 onEditPopupApps = { screen = Screen.POPUP_APPS },
                 backToSleepIds = backToSleepIds.value,
                 onGoBackToSleep = { askBackToSleep.value = it },
+                timeLeft = TimeLeftUi(
+                    show = container.settingsStore.showTimeLeft.collectAsState().value,
+                    onShowChange = container.settingsStore::setShowTimeLeft,
+                    large = container.settingsStore.timeLeftLarge.collectAsState().value,
+                    onLargeChange = container.settingsStore::setTimeLeftLarge,
+                    onResetPosition = container.settingsStore::resetTimeLeftOffset,
+                ),
                 relocks = RelockUi(
                     entries = container.lockController.relockLog.entries.collectAsState().value,
                     popupPackages = popupPackages,

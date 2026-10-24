@@ -12,6 +12,8 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.text.DateFormat
+import java.util.Date
 import com.fabiantorrestech.lockmyphone_extended.core.diag.ForegroundLog
 import com.fabiantorrestech.lockmyphone_extended.core.diag.RelockEntry
 import com.fabiantorrestech.lockmyphone_extended.core.diag.RelockLog
@@ -23,6 +25,9 @@ import com.fabiantorrestech.lockmyphone_extended.core.enforce.LockAccessibilityS
 import com.fabiantorrestech.lockmyphone_extended.core.enforce.Relocker
 import com.fabiantorrestech.lockmyphone_extended.core.notify.LockNotifications
 import com.fabiantorrestech.lockmyphone_extended.core.service.LockForegroundService
+
+/** A counting session's time left ([leftMs]) at [atMs], for the on-screen clock. */
+data class LimitClock(val leftMs: Long, val atMs: Long)
 
 /** What happened when a lock was asked to start. */
 sealed interface StartResult {
@@ -146,6 +151,14 @@ class LockController(
     /** A Limited lock's session: warns near its end and ends it when its time is up. */
     private val limitTick = Runnable { checkLimit() }
 
+    private val _limitClock = MutableStateFlow<LimitClock?>(null)
+
+    /** While a Limited or Timed apps session counts: its time left, for the on-screen clock. */
+    val limitClock: StateFlow<LimitClock?> = _limitClock.asStateFlow()
+
+    /** Whether the time-left clock is on screen; then the session warnings don't pop up. Set by the app container. */
+    var showsTimeLeftOnScreen: () -> Boolean = { false }
+
     /** The countdown screen waited long enough without the user picking an app. */
     private val choiceRelock = Runnable {
         _choiceDeadlineMs.value = null
@@ -171,6 +184,7 @@ class LockController(
      * @param options the global "During a lock" settings, saved into the lock.
      * @param limit a Limited lock's sessions and cooldowns, or null for a normal lock.
      * @param pickerLayout the allowed-apps list's folders and row order (a synced profile's).
+     * @param timedApps a Timed apps lock's untimed apps and banks (with [limit]), or null.
      */
     fun startLock(
         durationMs: Long,
@@ -188,6 +202,7 @@ class LockController(
         restartOwn: Boolean = false,
         limit: LimitPolicy? = null,
         pickerLayout: PickerLayout = PickerLayout.NONE,
+        timedApps: TimedApps? = null,
     ): StartResult {
         if (!relocker.isAdminActive()) return StartResult.AdminNotActive
 
@@ -209,6 +224,7 @@ class LockController(
             restartOwn = restartOwn,
             limit = limit,
             pickerLayout = pickerLayout,
+            timedApps = timedApps,
         )
         val (newState, previous) = when (decision) {
             is StartDecision.Refused -> {
@@ -221,6 +237,7 @@ class LockController(
         // A replaced lock's pass, gate or "locking again" countdown is over.
         mainHandler.removeCallbacks(pendingRelock)
         mainHandler.removeCallbacks(limitTick)
+        _limitClock.value = null
         cancelLockScreenChoice()
         store.save(newState)
         val session = newState.session
@@ -267,8 +284,11 @@ class LockController(
      */
     fun onUserUnlocked() {
         if (tryLimitedUnlock()) return
-        if (tryResumePass()) return
-        if (tryUnlockIntoAllowedApp()) return
+        if (tryResumePass() || tryUnlockIntoAllowedApp()) {
+            // The app already in front gets no new window event: a timed app counts from now.
+            lastAppInFront?.let { countLimited(it, null) }
+            return
+        }
         val decision = engine.decideOnUnlock(store.current, clock())
         Log.i(TAG, "User unlocked; decision=$decision")
         when (decision) {
@@ -313,24 +333,30 @@ class LockController(
         }
     }
 
-    /** Updates a Limited session's counting for the window now in front. */
+    /** Updates the counting of a Limited session, or a Timed apps lock's banks, for the window now in front. */
     private fun countLimited(packageName: String, className: String?, alwaysAllowed: Boolean? = null) {
         val session = (store.current as? LockState.Locked)?.session ?: return
         if (session.limit == null) return
-        val exempt = packageName == context.packageName ||
-            packageName in session.allowedPackages ||
+        val system = packageName == context.packageName ||
             (alwaysAllowed ?: foregroundPolicy.isAlwaysAllowed(packageName, className, popupPackages = session.popupPackages))
-        val next = engine.limitedForeground(store.current, clock(), exempt) ?: return
-        store.save(next)
+        val next = if (session.timedApps != null) {
+            engine.timedForeground(store.current, clock(), packageName, exempt = system)
+        } else {
+            engine.limitedForeground(store.current, clock(), exempt = system || packageName in session.allowedPackages)
+        }
+        next?.let(store::save)
         scheduleLimitTick()
     }
 
-    /** Wakes up at the next warning (1 min, 15 s) or the session's end, while time counts. */
+    /**
+     * Wakes up at the next warning (1 min, 15 s) or the session's end, while time counts, and
+     * updates [limitClock].
+     */
     private fun scheduleLimitTick() {
         mainHandler.removeCallbacks(limitTick)
-        val session = (store.current as? LockState.Locked)?.session ?: return
-        if (session.limitState.countingSinceMs == null) return
-        val leftMs = engine.sessionLeftMs(store.current, clock()) ?: return
+        val leftMs = engine.countingLeftMs(store.current, clock())
+        _limitClock.value = leftMs?.let { LimitClock(it, clock()) }
+        if (leftMs == null) return
         val delayMs = when {
             leftMs > LIMIT_WARNING_EARLY_MS -> leftMs - LIMIT_WARNING_EARLY_MS
             leftMs > LIMIT_WARNING_LATE_MS -> leftMs - LIMIT_WARNING_LATE_MS
@@ -340,19 +366,24 @@ class LockController(
     }
 
     private fun checkLimit() {
-        val leftMs = engine.sessionLeftMs(store.current, clock()) ?: return
+        val leftMs = engine.countingLeftMs(store.current, clock()) ?: return
+        // The on-screen clock turns amber and red instead.
+        val warn = !showsTimeLeftOnScreen()
         when {
             leftMs <= LIMIT_TICK_SLACK_MS -> {
-                val ended = engine.endSession(store.current, clock()) ?: return
-                store.save(ended)
-                val cooldownEnd = (ended as LockState.Locked).session.limitState.cooldownEndsAtMs
-                Log.i(TAG, "Limited lock: session used up; cooldown until $cooldownEnd")
+                val ended = engine.endCountedSession(store.current, clock()) ?: return
+                store.save(ended.state)
+                val cooldownEnd = ended.cooldownEndsAtMs
+                Log.i(TAG, "Session used up; cooldown until $cooldownEnd")
                 val minutes = cooldownEnd?.let { ((it - clock() + 59_999) / 60_000).toInt() } ?: 0
                 toast(context.getString(R.string.limit_session_over, minutes))
+                _limitClock.value = null
                 updateNotifications()
+                store.save(engine.clearPass(store.current))
                 relocker.lockNow()
                 return
             }
+            !warn -> Unit
             leftMs <= LIMIT_WARNING_LATE_MS + LIMIT_TICK_SLACK_MS -> toast(context.getString(R.string.limit_warning_seconds, 15))
             leftMs <= LIMIT_WARNING_EARLY_MS + LIMIT_TICK_SLACK_MS -> toast(context.getString(R.string.limit_warning_minute))
         }
@@ -375,6 +406,19 @@ class LockController(
         applyPass(newState)
         Log.i(TAG, "Unlocked into $appInFront; pass granted")
         return true
+    }
+
+    /** When [packageName]'s time bank may start a session again, or null if it isn't cooling down (Timed apps). */
+    fun timedCooldownEnd(packageName: String): Long? {
+        val session = (store.current as? LockState.Locked)?.session ?: return null
+        return engine.timedCooldownEnd(session, packageName, clock())
+    }
+
+    /** The soonest end of a Timed apps lock's running cooldowns, or null without one. */
+    fun nextTimedCooldownEnd(): Long? {
+        val session = (store.current as? LockState.Locked)?.session ?: return null
+        val now = clock()
+        return session.bankStates.values.mapNotNull { it.cooldownEndsAtMs?.takeIf { end -> end > now } }.minOrNull()
     }
 
     /** Grants a pass for an allowed app. Returns false if it isn't allowed or can't be enforced. */
@@ -418,11 +462,12 @@ class LockController(
     /** Screen off during a pass pauses it; the next unlock may resume it ([tryResumePass]). */
     fun onScreenOff() {
         // A Limited session pauses; unlocking again soon continues it.
-        engine.limitedScreenOff(store.current, clock())?.let {
-            mainHandler.removeCallbacks(limitTick)
+        (engine.limitedScreenOff(store.current, clock()) ?: engine.timedScreenOff(store.current, clock()))?.let {
             store.save(it)
             updateNotifications()
         }
+        mainHandler.removeCallbacks(limitTick)
+        _limitClock.value = null
         // The gate only lasts for this unlock: turning the screen off closes it for good.
         val gateWasOpen = _gateActive.value
         cancelLockScreenChoice()
@@ -556,6 +601,10 @@ class LockController(
             )
         )
         if (relock) {
+            // A timed app whose bank is cooling down: say until when.
+            session?.let { engine.timedCooldownEnd(it, packageName, clock(), alwaysAllowed) }?.let { until ->
+                toast(context.getString(R.string.timed_cooling_down, DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(until))))
+            }
             appInfoVisit = null
             val isActivity = foregroundPolicy.isActivity(packageName, className)
             Log.i(TAG, "Left allowed apps (foreground=$packageName/$className, activity=$isActivity, from=$previousApp); relocking")
@@ -658,7 +707,10 @@ class LockController(
         if (isKeyguardLocked()) return
         // Screen back on before the keyguard engaged: for a Limited lock that's an unlock.
         if (tryLimitedUnlock()) return
-        if (tryResumePass()) return
+        if (tryResumePass()) {
+            lastAppInFront?.let { countLimited(it, null) }
+            return
+        }
         if (engine.decideOnUnlock(store.current, clock()) != UnlockDecision.RELOCK) return
         store.save(engine.clearPass(store.current))
         if (allowGate && tryOpenGate()) return
@@ -684,6 +736,7 @@ class LockController(
         val endedEarly = current is LockState.Locked && clock() < current.session.endsAtMs
         mainHandler.removeCallbacks(pendingRelock)
         mainHandler.removeCallbacks(limitTick)
+        _limitClock.value = null
         cancelLockScreenChoice()
         store.save(LockState.Idle)
         endScheduler.cancel()

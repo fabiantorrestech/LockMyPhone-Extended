@@ -16,6 +16,7 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.wake.WakeWatcher
 class LockAccessibilityService : AccessibilityService() {
 
     private var wakeWatcher: WakeWatcher? = null
+    private var timeLeftOverlay: TimeLeftOverlay? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -24,11 +25,14 @@ class LockAccessibilityService : AccessibilityService() {
         val container = LockApp.container(this)
         container.lockController.updateNotifications()
         wakeWatcher = WakeWatcher(this, container.wakeSignalStore, container::onUnlockHeard).also { it.register() }
+        timeLeftOverlay = TimeLeftOverlay(this, container.lockController.limitClock) { container.settingsStore }.also { it.start() }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val packageName = event.packageName?.toString() ?: return
+        // The time-left clock's own window: not an app coming to the front.
+        if (event.className == TimeLeftOverlay.TimeLeftPill.CLASS_NAME) return
         // TEMPORARY probe for the quick-reply design (remove before shipping).
         android.util.Log.d(
             "ReplyProbe",
@@ -42,6 +46,8 @@ class LockAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         wakeWatcher?.unregister()
         wakeWatcher = null
+        timeLeftOverlay?.stop()
+        timeLeftOverlay = null
         instance = null
         isRunning = false
         LockApp.container(this).lockController.updateNotifications()

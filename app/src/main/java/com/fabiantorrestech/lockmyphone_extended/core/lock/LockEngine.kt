@@ -43,6 +43,9 @@ sealed interface LimitedUnlock {
     data class Session(val state: LockState.Locked, val resumed: Boolean) : LimitedUnlock
 }
 
+/** A session of a Limited or Timed apps lock that ended now ([LockEngine.endCountedSession]). */
+data class EndedSession(val state: LockState.Locked, val cooldownEndsAtMs: Long?)
+
 /** What to do when a new app window comes to the front while the device is unlocked. */
 enum class ForegroundDecision {
     IGNORE,
@@ -82,6 +85,7 @@ class LockEngine {
      * @param hiddenPackages allowed apps left out of the lock-screen list.
      * @param options the global "During a lock" settings.
      * @param pickerLayout the allowed-apps list's folders and row order.
+     * @param timedApps a Timed apps lock's untimed apps and banks (with [limit]), or null.
      */
     fun start(
         current: LockState,
@@ -101,17 +105,20 @@ class LockEngine {
         restartOwn: Boolean = false,
         limit: LimitPolicy? = null,
         pickerLayout: PickerLayout = PickerLayout.NONE,
+        timedApps: TimedApps? = null,
     ): StartDecision {
         require(durationMs > 0) { "durationMs must be positive" }
         require(bypassDelayMs == null || bypassDelayMs > 0) { "bypassDelayMs must be positive" }
         require(unlockChoiceSeconds > 0) { "unlockChoiceSeconds must be positive" }
+        // An Unlimited lock can only end early, so early unlock is always on for it.
+        val bypass = bypassDelayMs ?: LockSession.UNLIMITED_BYPASS_MS.takeIf { durationMs >= LockSession.UNLIMITED_MS }
         val new = LockState.Locked(
             LockSession(
                 label = label,
                 startedAtMs = nowMs,
                 endsAtMs = nowMs + durationMs,
                 allowedPackages = allowedPackages,
-                bypassDelayMs = bypassDelayMs,
+                bypassDelayMs = bypass,
                 dndEnabled = dndEnabled,
                 dndLevel = dndLevel,
                 grayscale = grayscale,
@@ -126,6 +133,8 @@ class LockEngine {
                 popupPackages = options.popupPackages,
                 limit = limit,
                 pickerLayout = pickerLayout,
+                // A Timed apps lock needs its timer.
+                timedApps = timedApps.takeIf { limit != null },
             )
         )
         // A lock whose time is up counts as over, even before its end alarm has run.
@@ -181,6 +190,8 @@ class LockEngine {
     fun limitedUnlock(state: LockState, nowMs: Long): LimitedUnlock? {
         if (!isActive(state, nowMs)) return null
         val locked = state as LockState.Locked
+        // A Timed apps lock unlocks like a normal one; its apps count when they're in front.
+        if (locked.session.timedApps != null) return null
         val policy = locked.session.limit ?: return null
         var limitState = locked.session.limitState
         if (limitState.inSession) {
@@ -243,14 +254,20 @@ class LockEngine {
 
     /**
      * Ends a session at [endMs]. Only exempt apps used: nothing to pay. A short one is a peek while
-     * the lock has some left. Otherwise a cooldown starts, a step longer than the last.
+     * the lock has some left ([peeksUsed] so far: a Timed apps lock counts all its banks'). Otherwise
+     * a cooldown starts, a step longer than the last.
      */
-    private fun closeSession(policy: LimitPolicy, limitState: LimitState, endMs: Long): LimitState {
+    private fun closeSession(
+        policy: LimitPolicy,
+        limitState: LimitState,
+        endMs: Long,
+        peeksUsed: Int = limitState.peeksUsed,
+    ): LimitState {
         val used = usedMs(limitState, endMs)
         val closed = LimitState(sessionsDone = limitState.sessionsDone, peeksUsed = limitState.peeksUsed)
         return when {
             used <= 0L -> closed
-            used < policy.peekMs && limitState.peeksUsed < policy.peekCount -> closed.copy(peeksUsed = limitState.peeksUsed + 1)
+            used < policy.peekMs && peeksUsed < policy.peekCount -> closed.copy(peeksUsed = limitState.peeksUsed + 1)
             else -> closed.copy(
                 sessionsDone = limitState.sessionsDone + 1,
                 cooldownEndsAtMs = endMs + policy.cooldownMs(limitState.sessionsDone),
@@ -263,6 +280,122 @@ class LockEngine {
 
     private fun LockState.Locked.withLimitState(limitState: LimitState) = copy(session = session.copy(limitState = limitState))
 
+    // ---- Timed apps ----
+
+    /**
+     * The bank [packageName] counts in during a Timed apps lock, or null when it doesn't count:
+     * [exempt] (this app, the system), not an allowed app, or untimed.
+     */
+    fun timedBank(session: LockSession, packageName: String, exempt: Boolean): String? {
+        val timed = session.timedApps ?: return null
+        if (exempt || packageName !in session.allowedPackages || packageName in timed.untimed) return null
+        return timed.bankOf(packageName)
+    }
+
+    /** When [packageName]'s bank may start a session again, or null if it isn't cooling down. */
+    fun timedCooldownEnd(session: LockSession, packageName: String, nowMs: Long, exempt: Boolean = false): Long? {
+        val bank = timedBank(session, packageName, exempt) ?: return null
+        return session.bankStates[bank]?.cooldownEndsAtMs?.takeIf { nowMs < it }
+    }
+
+    /**
+     * A window came to the front during a Timed apps lock: time counts in its app's bank (a new
+     * session opens there outside a cooldown) and stops in every other bank. Sessions paused by a
+     * screen-off longer than [LimitPolicy.GRACE_MS] end first. A bank that's cooling down doesn't
+     * start a session; [decideOnForeground] relocks its app. Returns null when nothing changes.
+     */
+    fun timedForeground(state: LockState, nowMs: Long, packageName: String, exempt: Boolean): LockState? {
+        if (!isActive(state, nowMs)) return null
+        val locked = state as LockState.Locked
+        val session = locked.session
+        val policy = session.limit ?: return null
+        if (session.timedApps == null) return null
+        val bank = timedBank(session, packageName, exempt)
+        var banks = settleBanks(policy, session.bankStates, nowMs).mapValues { (name, s) ->
+            if (name != bank) stopCounting(s, nowMs) else s
+        }
+        if (bank != null) {
+            val s = banks[bank] ?: LimitState()
+            val cooling = s.cooldownEndsAtMs?.let { nowMs < it } == true
+            val next = when {
+                cooling -> s
+                !s.inSession -> LimitState(
+                    inSession = true,
+                    countingSinceMs = nowMs,
+                    sessionsDone = s.sessionsDone,
+                    peeksUsed = s.peeksUsed,
+                )
+                s.countingSinceMs == null -> s.copy(countingSinceMs = nowMs, screenOffAtMs = null)
+                else -> s
+            }
+            banks = banks + (bank to next)
+        }
+        if (banks == session.bankStates) return null
+        return locked.copy(session = session.copy(bankStates = banks))
+    }
+
+    /** The screen turned off during a Timed apps lock: every bank stops counting, open sessions pause. */
+    fun timedScreenOff(state: LockState, nowMs: Long): LockState? {
+        val locked = state as? LockState.Locked ?: return null
+        val session = locked.session
+        if (session.timedApps == null) return null
+        val banks = session.bankStates.mapValues { (_, s) ->
+            val stopped = stopCounting(s, nowMs)
+            if (stopped.inSession && stopped.screenOffAtMs == null) stopped.copy(screenOffAtMs = nowMs) else stopped
+        }
+        if (banks == session.bankStates) return null
+        return locked.copy(session = session.copy(bankStates = banks))
+    }
+
+    /**
+     * How much of the session that's counting now is left (a Limited lock's, or the bank in front
+     * in a Timed apps lock), or null while nothing counts.
+     */
+    fun countingLeftMs(state: LockState, nowMs: Long): Long? {
+        val session = (state as? LockState.Locked)?.session ?: return null
+        val policy = session.limit ?: return null
+        if (session.timedApps == null) {
+            if (session.limitState.countingSinceMs == null) return null
+            return sessionLeftMs(state, nowMs)
+        }
+        val counting = session.bankStates.values.firstOrNull { it.countingSinceMs != null } ?: return null
+        return policy.sessionMs - usedMs(counting, nowMs)
+    }
+
+    /** The session that's counting is used up: it ends now, and its cooldown starts. */
+    fun endCountedSession(state: LockState, nowMs: Long): EndedSession? {
+        val locked = state as? LockState.Locked ?: return null
+        val session = locked.session
+        val policy = session.limit ?: return null
+        if (session.timedApps == null) {
+            val ended = endSession(state, nowMs) as? LockState.Locked ?: return null
+            return EndedSession(ended, ended.session.limitState.cooldownEndsAtMs)
+        }
+        val (bank, s) = session.bankStates.entries.firstOrNull { it.value.countingSinceMs != null } ?: return null
+        val closed = closeSession(policy, s, nowMs, totalPeeks(session.bankStates))
+        val ended = locked.copy(session = session.copy(bankStates = session.bankStates + (bank to closed)))
+        return EndedSession(ended, closed.cooldownEndsAtMs)
+    }
+
+    /** Ends bank sessions paused by a screen-off longer than the grace period, at that screen-off. */
+    private fun settleBanks(policy: LimitPolicy, banks: Map<String, LimitState>, nowMs: Long): Map<String, LimitState> {
+        var settled = banks
+        banks.forEach { (name, s) ->
+            val offAt = s.screenOffAtMs
+            if (s.inSession && offAt != null && nowMs - offAt > LimitPolicy.GRACE_MS) {
+                settled = settled + (name to closeSession(policy, s, offAt, totalPeeks(settled)))
+            }
+        }
+        return settled
+    }
+
+    private fun stopCounting(s: LimitState, nowMs: Long): LimitState {
+        val since = s.countingSinceMs ?: return s
+        return s.copy(usedMs = s.usedMs + (nowMs - since).coerceAtLeast(0L), countingSinceMs = null)
+    }
+
+    private fun totalPeeks(banks: Map<String, LimitState>): Int = banks.values.sumOf { it.peeksUsed }
+
     fun isAllowed(state: LockState, packageName: String): Boolean =
         state is LockState.Locked && packageName in state.session.allowedPackages
 
@@ -270,6 +403,8 @@ class LockEngine {
     fun grantPass(state: LockState, nowMs: Long, packageName: String): LockState? {
         if (!isActive(state, nowMs) || !isAllowed(state, packageName)) return null
         val locked = state as LockState.Locked
+        // A timed app whose bank is cooling down can't be opened until it's over.
+        if (timedCooldownEnd(locked.session, packageName, nowMs) != null) return null
         return locked.copy(session = locked.session.copy(passActive = true))
     }
 
@@ -309,6 +444,7 @@ class LockEngine {
         val session = (state as LockState.Locked).session
         if (!session.passPaused) return ResumeDecision.NONE
         if (!appInFrontIsOwnApp && appInFront !in session.allowedPackages) return ResumeDecision.NONE
+        if (!appInFrontIsOwnApp && timedCooldownEnd(session, appInFront, nowMs) != null) return ResumeDecision.NONE
         return when (session.resumeMode) {
             UnlockResumeMode.RESUME_APP -> ResumeDecision.RESUME_APP
             UnlockResumeMode.SHOW_LOCK_SCREEN -> ResumeDecision.SHOW_LOCK_SCREEN
@@ -334,6 +470,7 @@ class LockEngine {
         val session = locked.session
         if (!session.unlockIntoAllowedApp || session.passActive) return null
         if (!appInFrontIsOwnApp && appInFront !in session.allowedPackages) return null
+        if (!appInFrontIsOwnApp && timedCooldownEnd(session, appInFront, nowMs) != null) return null
         return locked.copy(session = session.copy(passActive = true, passPaused = false))
     }
 
@@ -362,6 +499,8 @@ class LockEngine {
         // A Limited lock's open session allows every app.
         if (session.limitState.sessionRunning) return ForegroundDecision.IGNORE
         if (!session.passActive) return ForegroundDecision.IGNORE
+        // A Timed apps lock: an allowed app whose bank is cooling down locks again.
+        if (!isAlwaysAllowed && timedCooldownEnd(session, packageName, nowMs) != null) return ForegroundDecision.RELOCK
         if (isAlwaysAllowed || packageName in session.allowedPackages) return ForegroundDecision.IGNORE
         if (isLauncher && session.homeAction != HomeAction.LOCK) return ForegroundDecision.REDIRECT
         return ForegroundDecision.RELOCK

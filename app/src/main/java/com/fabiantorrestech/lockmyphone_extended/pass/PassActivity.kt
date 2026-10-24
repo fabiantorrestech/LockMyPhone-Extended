@@ -38,6 +38,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.draw.alpha
+import kotlinx.coroutines.delay
+import java.text.DateFormat
+import java.util.Date
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -179,6 +185,8 @@ class PassActivity : ComponentActivity() {
                             when {
                                 // The lock is over: nothing left to count, so offer a way out instead.
                                 endMs == null -> ExitButton(pickerStyle, font, onExit = ::finish)
+                                // An Unlimited lock has no time left to show until an early unlock starts.
+                                (lockNow as? LockState.Locked)?.session?.noEndInSight == true -> Unit
                                 pickerStyle.showTimeLeft -> TimeLeft(endMs, pickerStyle, font)
                             }
                             if (endMs != null) {
@@ -206,7 +214,16 @@ class PassActivity : ComponentActivity() {
                         val refreshable = container.notifications.isRefreshable(state.session)
                         // Rows above the apps: the spacer, the Phone row, the Refresh button.
                         val rowsBefore = 1 + (if (phoneCorner == null) 1 else 0) + (if (refreshable) 1 else 0)
+                        // A Timed apps lock: redraw when the soonest cooldown ends.
+                        var cooldownTick by remember { mutableIntStateOf(0) }
+                        LaunchedEffect(cooldownTick, lockNow) {
+                            val next = container.lockController.nextTimedCooldownEnd() ?: return@LaunchedEffect
+                            delay(next - System.currentTimeMillis())
+                            cooldownTick++
+                        }
                         val appRow = @Composable { app: LaunchableApp, indent: Boolean ->
+                            // A timed app whose time bank is cooling down: greyed, with when it's back.
+                            val until = cooldownTick.let { container.lockController.timedCooldownEnd(app.packageName) }
                             ListItem(
                                 leadingContent = if (showIcons) {
                                     { AppIcon(app.packageName, container.appCatalog) }
@@ -214,8 +231,18 @@ class PassActivity : ComponentActivity() {
                                     null
                                 },
                                 headlineContent = { appName(app.label) },
+                                supportingContent = until?.let { end ->
+                                    {
+                                        Text(
+                                            stringResource(
+                                                R.string.picker_next_session,
+                                                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(end)),
+                                            )
+                                        )
+                                    }
+                                },
                                 modifier = Modifier
-                                    .clickable { openApp(app) }
+                                    .then(if (until == null) Modifier.clickable { openApp(app) } else Modifier.alpha(COOLING_ALPHA))
                                     .padding(start = if (indent) FolderIndent else 0.dp),
                             )
                         }
@@ -371,6 +398,9 @@ class PassActivity : ComponentActivity() {
     companion object {
         /** How far a folder's apps sit in from the folder row. */
         private val FolderIndent = 24.dp
+
+        /** A timed app that's cooling down. */
+        private const val COOLING_ALPHA = 0.38f
         private const val EXTRA_PACKAGE = "package"
         private const val EXTRA_DIAL = "dial"
         private const val EXTRA_FROM_REDIRECT = "from_redirect"

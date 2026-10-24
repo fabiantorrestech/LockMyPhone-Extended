@@ -128,6 +128,7 @@ fun formatCalendarClash(context: Context, clash: CalendarClash): String {
 fun formatAlreadyLocked(context: Context, running: LockSession): String {
     val kind = context.getString(lockKindLabel(running.source.kind))
     val name = running.source.name.ifEmpty { context.getString(R.string.quick_lock) }
+    if (running.noEndInSight) return context.getString(R.string.already_locked_no_end, kind, name)
     val until = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(running.effectiveEndMs))
     return context.getString(R.string.already_locked, kind, name, until)
 }

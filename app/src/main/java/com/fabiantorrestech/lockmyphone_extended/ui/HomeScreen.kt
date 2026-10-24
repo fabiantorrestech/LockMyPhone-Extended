@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.ManageSearch
+import androidx.compose.material.icons.filled.Timer
 import com.fabiantorrestech.lockmyphone_extended.core.diag.RelockEntry
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Close
@@ -204,6 +205,7 @@ fun HomeScreen(
     popupAppCount: Int,
     onEditPopupApps: () -> Unit,
     relocks: RelockUi,
+    timeLeft: TimeLeftUi,
     /** Morning locks that can offer "Going back to sleep" now. */
     backToSleepIds: Set<Long>,
     onGoBackToSleep: (Long) -> Unit,
@@ -336,6 +338,7 @@ fun HomeScreen(
                                     onEditPopupApps = onEditPopupApps,
                                     relocks = relocks,
                                     appLabel = appLabel,
+                                    timeLeft = timeLeft,
                                 )
                                 if (pro) LengthPresetsCard(presetsSec, onPresetsChange)
 
@@ -423,6 +426,15 @@ class RelockUi(
     val onClear: () -> Unit,
     /** Whether popups from this app can be allowed (this app must be able to see it). */
     val canAllowPopups: (String) -> Boolean,
+)
+
+/** The time-left clock's settings (During a lock). */
+class TimeLeftUi(
+    val show: Boolean,
+    val onShowChange: (Boolean) -> Unit,
+    val large: Boolean,
+    val onLargeChange: (Boolean) -> Unit,
+    val onResetPosition: () -> Unit,
 )
 
 /** Simple or Pro: the first card in Settings, in both modes. */
@@ -1324,6 +1336,7 @@ private fun DuringLockCard(
     onEditPopupApps: () -> Unit,
     relocks: RelockUi,
     appLabel: (String) -> String,
+    timeLeft: TimeLeftUi,
 ) {
     var choosingHome by remember { mutableStateOf(false) }
     var showingRelocks by remember { mutableStateOf(false) }
@@ -1364,6 +1377,28 @@ private fun DuringLockCard(
                         LocalContext.current.resources.getQuantityString(R.plurals.apps_count, popupAppCount, popupAppCount)
                     } + "\n" + stringResource(R.string.popup_apps_hint),
                     onClick = onEditPopupApps,
+                )
+            }
+            SwitchSettingsRow(
+                icon = Icons.Filled.Timer,
+                title = stringResource(R.string.time_left_title),
+                summary = stringResource(R.string.time_left_hint),
+                checked = timeLeft.show,
+                onCheckedChange = timeLeft.onShowChange,
+            )
+            if (timeLeft.show && isPro()) {
+                SwitchSettingsRow(
+                    icon = Icons.Filled.Timer,
+                    title = stringResource(R.string.time_left_large),
+                    summary = null,
+                    checked = timeLeft.large,
+                    onCheckedChange = timeLeft.onLargeChange,
+                )
+                SettingsRow(
+                    icon = Icons.Filled.Timer,
+                    title = stringResource(R.string.time_left_reset),
+                    summary = null,
+                    onClick = timeLeft.onResetPosition,
                 )
             }
             SettingsRow(
