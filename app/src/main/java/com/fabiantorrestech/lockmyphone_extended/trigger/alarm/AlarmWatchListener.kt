@@ -163,6 +163,8 @@ class AlarmWatchListener : NotificationListenerService() {
         val wakePackage = ringingWake.remove(sbn.key)
         if (matched.isEmpty() && wakePackage == null) return
         val removedAtMs = System.currentTimeMillis()
+        // Dismissed or snoozed: either way the Morning lock's hour can't have started before now.
+        if (wakePackage != null) container.wakeSignalStore.onAlarmEnded(removedAtMs)
         confirming++
         val packageName = sbn.packageName
         // Wait to see whether the app posts a snooze / upcoming / missed notification.

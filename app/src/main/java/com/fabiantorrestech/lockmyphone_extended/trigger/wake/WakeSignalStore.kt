@@ -40,6 +40,12 @@ class WakeSignalStore(context: Context) {
     fun screenOnsSinceUnlock(): List<Long> =
         prefs.getString(KEY_SCREEN_ONS, "").orEmpty().split(',').mapNotNull { it.toLongOrNull() }
 
+    /** When a Morning lock's alarm last stopped ringing (dismissed or snoozed), or null if never. */
+    val alarmEndedMs: Long?
+        get() = prefs.getLong(KEY_ALARM_ENDED, NONE).takeIf { it != NONE }
+
+    fun onAlarmEnded(nowMs: Long) = prefs.edit { putLong(KEY_ALARM_ENDED, nowMs) }
+
     fun onScreenOn(nowMs: Long) {
         val times = screenOnsSinceUnlock()
         if (times.isNotEmpty() && nowMs - times.last() < SCREEN_ON_DEDUPE_MS) return
@@ -102,6 +108,7 @@ class WakeSignalStore(context: Context) {
         private const val KEY_WAKE_GAP = "wake_gap_ms"
         private const val KEY_WAKE_CHARGED = "wake_charged_ms"
         private const val KEY_SCREEN_ONS = "screen_ons"
+        private const val KEY_ALARM_ENDED = "alarm_ended_ms"
         private const val MAX_SCREEN_ONS = 50
         private const val SCREEN_ON_DEDUPE_MS = 60_000L
         private const val NONE = -1L

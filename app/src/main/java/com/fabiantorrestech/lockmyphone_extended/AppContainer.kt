@@ -256,7 +256,8 @@ class AppContainer(context: Context) {
 
     /** An unlock heard by the accessibility service's watcher, for Morning lock. */
     fun onUnlockHeard(previousUnlockMs: Long?, chargedMs: Long, screenOnsMs: List<Long>, nowMs: Long) {
-        appScope.launch { wakeTriggerManager.onUnlock(previousUnlockMs, chargedMs, screenOnsMs, nowMs) }
+        val alarmEndedMs = wakeSignalStore.alarmEndedMs
+        appScope.launch { wakeTriggerManager.onUnlock(previousUnlockMs, chargedMs, screenOnsMs, alarmEndedMs, nowMs) }
     }
 
     /**

@@ -80,13 +80,24 @@ object WakeRules {
      * first time the screen came on today inside the window (you were awake then), so a phone left
      * untouched after an early start doesn't lock hours later. Glances outside the window (at night)
      * don't count.
+     *
+     * With [WakeTrigger.alarmFirst] it never counts from before [alarmEndedMs], when one of its alarms
+     * last stopped ringing: a screen lit by a ringing or snoozed alarm isn't being awake.
      */
-    fun remainingLockMs(trigger: WakeTrigger, nowMs: Long, zone: ZoneId, screenOnsMs: List<Long>): Long {
+    fun remainingLockMs(
+        trigger: WakeTrigger,
+        nowMs: Long,
+        zone: ZoneId,
+        screenOnsMs: List<Long>,
+        alarmEndedMs: Long? = null,
+    ): Long {
         if (!trigger.countFromScreenOn) return lockMs(trigger)
         val today = day(nowMs, zone)
-        val awakeSince = screenOnsMs
+        val firstScreenOn = screenOnsMs
             .filter { it <= nowMs && day(it, zone) == today && inWindow(trigger, it, zone) }
             .minOrNull() ?: nowMs
+        val alarmEnded = alarmEndedMs?.takeIf { trigger.alarmFirst && it <= nowMs && day(it, zone) == today }
+        val awakeSince = if (alarmEnded != null) maxOf(firstScreenOn, alarmEnded) else firstScreenOn
         return lockMs(trigger) - (nowMs - awakeSince)
     }
 
@@ -111,6 +122,7 @@ object WakeRules {
      * @param previousUnlockMs the unlock before this one; null if none was ever recorded.
      * @param chargedMs how long the phone charged between the two.
      * @param screenOnsMs when the screen came on between the two (for [remainingLockMs]).
+     * @param alarmEndedMs when one of its alarms last stopped ringing (for [remainingLockMs]).
      */
     fun decideUnlock(
         trigger: WakeTrigger,
@@ -119,11 +131,12 @@ object WakeRules {
         previousUnlockMs: Long?,
         chargedMs: Long,
         screenOnsMs: List<Long> = emptyList(),
+        alarmEndedMs: Long? = null,
     ): WakeDecision {
         dayCheck(trigger, nowMs, zone)?.let { return WakeDecision.Skip(it) }
         if (previousUnlockMs == null) return WakeDecision.Skip(WakeSkip.NO_HISTORY)
         if (nowMs - previousUnlockMs < trigger.minSleepMinutes * 60_000L) return WakeDecision.Skip(WakeSkip.SHORT_GAP)
-        if (remainingLockMs(trigger, nowMs, zone, screenOnsMs) < MIN_LOCK_MS) return WakeDecision.Skip(WakeSkip.AWAKE_EARLIER)
+        if (remainingLockMs(trigger, nowMs, zone, screenOnsMs, alarmEndedMs) < MIN_LOCK_MS) return WakeDecision.Skip(WakeSkip.AWAKE_EARLIER)
         // Cheapest check first; any one is enough.
         if (trigger.checkCharging && chargedMs >= trigger.chargingMinutes * 60_000L) return WakeDecision.Lock(SleepProof.CHARGING)
         if (trigger.checkPlace && trigger.sleepPlaceIds.isNotEmpty()) return WakeDecision.CheckPlace

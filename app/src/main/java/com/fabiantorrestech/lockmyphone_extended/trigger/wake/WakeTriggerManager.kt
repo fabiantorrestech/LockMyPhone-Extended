@@ -49,8 +49,9 @@ class WakeTriggerManager(
 
     /**
      * @param screenOnsMs when the screen came on between the previous unlock and this one.
+     * @param alarmEndedMs when a watched alarm last stopped ringing, or null.
      */
-    suspend fun onUnlock(previousUnlockMs: Long?, chargedMs: Long, screenOnsMs: List<Long>, nowMs: Long) {
+    suspend fun onUnlock(previousUnlockMs: Long?, chargedMs: Long, screenOnsMs: List<Long>, alarmEndedMs: Long?, nowMs: Long) {
         // An alarm being dismissed right now may be an alarm lock, which comes first: let it settle.
         var waited = 0
         while (alarmBusy() && waited < MAX_ALARM_WAITS) {
@@ -59,11 +60,11 @@ class WakeTriggerManager(
         }
         val zone = ZoneId.systemDefault()
         enabledTriggers().forEach { trigger ->
-            val decision = when (val first = WakeRules.decideUnlock(trigger, nowMs, zone, previousUnlockMs, chargedMs, screenOnsMs)) {
+            val decision = when (val first = WakeRules.decideUnlock(trigger, nowMs, zone, previousUnlockMs, chargedMs, screenOnsMs, alarmEndedMs)) {
                 WakeDecision.CheckPlace -> checkPlaces(trigger)
                 else -> first
             }
-            val durationMs = WakeRules.remainingLockMs(trigger, nowMs, zone, screenOnsMs)
+            val durationMs = WakeRules.remainingLockMs(trigger, nowMs, zone, screenOnsMs, alarmEndedMs)
             if (decision is WakeDecision.Lock && trigger.lateCheck && WakeRules.minuteOfDay(nowMs, zone) >= trigger.lateCheckAfterMin) {
                 startLateCheck(trigger, decision, durationMs, nowMs, zone)
             } else {
