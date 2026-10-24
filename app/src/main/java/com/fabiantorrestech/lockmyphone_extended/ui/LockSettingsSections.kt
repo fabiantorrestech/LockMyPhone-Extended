@@ -74,7 +74,7 @@ fun LockSettingsSections(
         SettingsRow(
             icon = Icons.Filled.Timer,
             title = lengthTitle,
-            summary = formatDurationLabel(settings.durationSec * 1_000),
+            summary = formatLengthLabel(settings.durationSec * 1_000),
             onClick = { editing = LockDialog.LENGTH },
         )
         DurationPresetChips(

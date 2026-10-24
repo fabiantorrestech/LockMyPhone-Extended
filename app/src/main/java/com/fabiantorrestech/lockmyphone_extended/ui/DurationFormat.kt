@@ -20,6 +20,19 @@ fun formatDurationLabel(durationMs: Long): String {
     )
 }
 
+/** "50 min", "9 h", "1 h 30 min": a length to read at a glance (the H:M:S form is for editing). */
+fun formatLengthLabel(durationMs: Long): String {
+    val totalSeconds = ceilSeconds(durationMs)
+    val h = totalSeconds / 3600
+    val m = (totalSeconds % 3600) / 60
+    val s = totalSeconds % 60
+    return listOfNotNull(
+        h.takeIf { it > 0 }?.let { "$it h" },
+        m.takeIf { it > 0 }?.let { "$it min" },
+        s.takeIf { it > 0 && h == 0L }?.let { "$it s" },
+    ).joinToString(" ").ifEmpty { "0 min" }
+}
+
 /** "1:05:00", for a live countdown. */
 fun formatDurationClock(durationMs: Long): String {
     val totalSeconds = ceilSeconds(durationMs)

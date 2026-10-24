@@ -220,7 +220,7 @@ fun CalendarEditorScreen(
                 SettingsRow(
                     icon = Icons.Filled.Timer,
                     title = stringResource(R.string.lock_length),
-                    summary = formatDurationLabel(draft.fixedDurationSec * 1_000),
+                    summary = formatLengthLabel(draft.fixedDurationSec * 1_000),
                     onClick = { editing = CalendarDialog.LENGTH },
                 )
             }

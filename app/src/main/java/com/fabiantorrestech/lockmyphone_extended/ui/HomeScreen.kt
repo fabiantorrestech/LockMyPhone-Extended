@@ -307,7 +307,7 @@ fun HomeScreen(
                         )
                         if (pro) LengthPresetsCard(presetsSec, onPresetsChange)
 
-                        SettingsGroupHeader(stringResource(R.string.appearance_title))
+                        SettingsGroupHeader(stringResource(R.string.settings_group_look))
                         AppearanceCard(themeMode, onThemeModeChange, showPickerIcons, onShowPickerIconsChange, pickerAppearance)
 
                         if (pro) {
@@ -1196,36 +1196,41 @@ class SetupActions(
 /** The permissions checklist. Shared by the home screen and onboarding. */
 @Composable
 fun SetupChecklist(setup: SetupStatus, actions: SetupActions) {
+    // Each row: its label, whether it's allowed, and what "Enable" does.
+    val rows = buildList {
+        add(Triple(stringResource(R.string.setup_admin), setup.adminActive, actions.onEnableAdmin))
+        add(Triple(stringResource(R.string.setup_notifications), setup.notificationsGranted, actions.onRequestNotifications))
+        add(Triple(stringResource(R.string.setup_accessibility), setup.accessibilityEnabled, actions.onEnableAccessibility))
+        add(Triple(stringResource(R.string.setup_background), setup.batteryUnrestricted, actions.onAllowBackground))
+        if (setup.locationTriggersExist) {
+            add(Triple(stringResource(R.string.setup_location), setup.preciseLocationGranted, actions.onGrantLocation))
+            add(Triple(stringResource(R.string.setup_background_location), setup.backgroundLocationGranted, actions.onGrantBackgroundLocation))
+            add(Triple(stringResource(R.string.setup_location_services), setup.locationServicesOn, actions.onEnableLocationServices))
+        }
+        if (setup.beaconPlacesExist) add(Triple(stringResource(R.string.setup_nearby_devices), setup.bluetoothScanGranted, actions.onGrantBluetoothScan))
+        if (setup.nfcTagsExist && setup.hasNfc) add(Triple(stringResource(R.string.setup_nfc), setup.nfcOn, actions.onTurnOnNfc))
+        if (setup.calendarTriggersExist) add(Triple(stringResource(R.string.setup_calendar), setup.calendarGranted, actions.onGrantCalendar))
+        if (setup.alarmTriggersExist) {
+            add(Triple(stringResource(R.string.setup_notification_access), setup.notificationAccessGranted, actions.onGrantNotificationAccess))
+        }
+        if (setup.dndWanted) add(Triple(stringResource(R.string.setup_dnd), setup.dndAccessGranted, actions.onGrantDnd))
+        // Normally granted automatically; shown only if the user revoked it.
+        if (!setup.exactAlarmsAllowed) add(Triple(stringResource(R.string.setup_exact_alarms), false, actions.onAllowExactAlarms))
+    }
+    val (allowed, missing) = rows.partition { it.second }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.setup_title), style = MaterialTheme.typography.titleMedium)
-            SetupRow(stringResource(R.string.setup_admin), setup.adminActive, actions.onEnableAdmin)
-            SetupRow(stringResource(R.string.setup_notifications), setup.notificationsGranted, actions.onRequestNotifications)
-            SetupRow(stringResource(R.string.setup_accessibility), setup.accessibilityEnabled, actions.onEnableAccessibility)
-            SetupRow(stringResource(R.string.setup_background), setup.batteryUnrestricted, actions.onAllowBackground)
-            if (setup.locationTriggersExist) {
-                SetupRow(stringResource(R.string.setup_location), setup.preciseLocationGranted, actions.onGrantLocation)
-                SetupRow(stringResource(R.string.setup_background_location), setup.backgroundLocationGranted, actions.onGrantBackgroundLocation)
-                SetupRow(stringResource(R.string.setup_location_services), setup.locationServicesOn, actions.onEnableLocationServices)
-            }
-            if (setup.beaconPlacesExist) {
-                SetupRow(stringResource(R.string.setup_nearby_devices), setup.bluetoothScanGranted, actions.onGrantBluetoothScan)
-            }
-            if (setup.nfcTagsExist && setup.hasNfc) {
-                SetupRow(stringResource(R.string.setup_nfc), setup.nfcOn, actions.onTurnOnNfc)
-            }
-            if (setup.calendarTriggersExist) {
-                SetupRow(stringResource(R.string.setup_calendar), setup.calendarGranted, actions.onGrantCalendar)
-            }
-            if (setup.alarmTriggersExist) {
-                SetupRow(stringResource(R.string.setup_notification_access), setup.notificationAccessGranted, actions.onGrantNotificationAccess)
-            }
-            if (setup.dndWanted) {
-                SetupRow(stringResource(R.string.setup_dnd), setup.dndAccessGranted, actions.onGrantDnd)
-            }
-            // Normally granted automatically; shown only if the user revoked it.
-            if (!setup.exactAlarmsAllowed) {
-                SetupRow(stringResource(R.string.setup_exact_alarms), false, actions.onAllowExactAlarms)
+            Text(
+                stringResource(if (missing.isEmpty()) R.string.setup_all_set else R.string.setup_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            missing.forEach { (label, _, onFix) -> SetupRow(label, false, onFix) }
+            if (allowed.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.setup_allowed_list, allowed.joinToString(" · ") { it.first }),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -1588,7 +1593,7 @@ internal fun StartProfileDialog(
     onDismiss: () -> Unit,
 ) {
     val durationMs = profile.defaultDurationSec * 1_000
-    val length = formatDurationLabel(durationMs)
+    val length = formatLengthLabel(durationMs)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.profile_start_title, profile.name)) },
@@ -1623,11 +1628,11 @@ internal fun ConfirmLockDialog(
         text = {
             Text(
                 if (bypassWaitMinutes == 0) {
-                    stringResource(R.string.start_confirm_body_instant, formatDurationLabel(durationMs))
+                    stringResource(R.string.start_confirm_body_instant, formatLengthLabel(durationMs))
                 } else if (bypassWaitMinutes != null) {
-                    stringResource(R.string.start_confirm_body_bypass, formatDurationLabel(durationMs), bypassWaitMinutes)
+                    stringResource(R.string.start_confirm_body_bypass, formatLengthLabel(durationMs), bypassWaitMinutes)
                 } else {
-                    stringResource(R.string.start_confirm_body, formatDurationLabel(durationMs))
+                    stringResource(R.string.start_confirm_body, formatLengthLabel(durationMs))
                 }
             )
         },

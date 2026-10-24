@@ -146,7 +146,7 @@ private fun QuickLockCard(quickLock: LockSettings, presetsSec: List<Long>, admin
             }
             Column(Modifier.clickable { pickingLength = true }) {
                 Text(stringResource(R.string.quick_lock_for), style = MaterialTheme.typography.labelLarge)
-                Text(formatDurationLabel(durationMs), style = MaterialTheme.typography.displaySmall)
+                Text(formatLengthLabel(durationMs), style = MaterialTheme.typography.displaySmall)
             }
             DurationPresetChips(
                 presetsSec = presetsSec,
@@ -275,7 +275,7 @@ private fun ProfileTile(
 /** "50 min · 4 apps": shorter than the full profile summary, so it fits a tile. */
 private fun tileSummary(context: android.content.Context, profile: LockProfile): String {
     val visible = (profile.allowedPackages - profile.hiddenPackages).size
-    return formatDurationLabel(profile.defaultDurationSec * 1_000) + " · " +
+    return formatLengthLabel(profile.defaultDurationSec * 1_000) + " · " +
         context.resources.getQuantityString(R.plurals.apps_count, visible, visible)
 }
 

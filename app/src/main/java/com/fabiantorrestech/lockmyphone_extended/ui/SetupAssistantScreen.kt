@@ -283,7 +283,7 @@ private fun SituationCard(situation: Situation, selected: Boolean, onClick: () -
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    stringResource(situation.nameRes) + " · " + formatDurationLabel(situation.durationSec * 1_000),
+                    stringResource(situation.nameRes) + " · " + formatLengthLabel(situation.durationSec * 1_000),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(stringResource(situation.descriptionRes), style = MaterialTheme.typography.bodyMedium)
@@ -392,7 +392,7 @@ private fun DoneStep(chosen: Set<Situation>, bedtime: Pair<Int, Int>?) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.assist_done_creates), style = MaterialTheme.typography.titleSmall)
                 Situation.entries.filter { it in chosen }.forEach { situation ->
-                    Text("${situation.icon}  ${stringResource(situation.nameRes)} · ${formatDurationLabel(situation.durationSec * 1_000)}")
+                    Text("${situation.icon}  ${stringResource(situation.nameRes)} · ${formatLengthLabel(situation.durationSec * 1_000)}")
                 }
                 bedtime?.let { (start, end) ->
                     Text("🌙  " + stringResource(R.string.assist_done_bedtime, formatMinuteOfDay(start), formatMinuteOfDay(end)))

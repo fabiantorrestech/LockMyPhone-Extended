@@ -71,7 +71,7 @@ fun formatProfileSummary(context: Context, profile: LockProfile): String {
     val visibleCount = (profile.allowedPackages - profile.hiddenPackages).size
     val hiddenCount = (profile.hiddenPackages intersect profile.allowedPackages).size
     val parts = mutableListOf(
-        formatDurationLabel(profile.defaultDurationSec * 1_000),
+        formatLengthLabel(profile.defaultDurationSec * 1_000),
         context.resources.getQuantityString(R.plurals.apps_count, visibleCount, visibleCount),
     )
     if (hiddenCount > 0) parts += context.getString(R.string.apps_hidden_count, hiddenCount)

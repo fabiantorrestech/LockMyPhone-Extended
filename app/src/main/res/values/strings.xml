@@ -1141,8 +1141,11 @@
     <string name="mode_simple_hint">Just what you need, with sensible defaults. Switch to Pro for every fine-grained control.</string>
     <string name="mode_pro_hint">Every setting is shown. Nothing changes when you switch back to Simple; it\'s only hidden.</string>
     <string name="mode_more_in_pro">More settings (location engine, beacon timing, intent API, diagnostics…) are in Pro mode.</string>
-    <string name="settings_group_setup">Setup</string>
+    <string name="settings_group_setup">Getting started</string>
+    <string name="setup_all_set">✓ Everything the lock needs is allowed</string>
+    <string name="setup_allowed_list">Allowed: %1$s</string>
     <string name="settings_group_locks">Locks</string>
+    <string name="settings_group_look">Look and feel</string>
     <string name="settings_group_advanced">Advanced</string>
     <string name="assistant_card_title">Set-up assistant</string>
     <string name="assistant_card_hint">Add starter locks for sleep, focus, study or family time. Your own locks are kept.</string>
@@ -1184,7 +1187,7 @@
     <string name="assist_bedtime_hint">Every day of the week; change days and times later in Automations. If it\'s already past bedtime, tonight\'s lock starts a minute after you finish.</string>
     <string name="assist_done_title">You\'re all set</string>
     <string name="assist_done_body">Start a lock from the Lock tab whenever you like.</string>
-    <string name="assist_done_creates">This adds:</string>
+    <string name="assist_done_creates">Your starter locks:</string>
     <string name="assist_done_bedtime">Sleep every night, %1$s to %2$s</string>
     <string name="assist_done_pro">The app is in Simple mode. Settings → Pro shows every fine-grained control (beacons, timing, intent API…).</string>
 </resources>

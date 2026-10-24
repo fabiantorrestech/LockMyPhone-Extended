@@ -243,7 +243,7 @@ fun NfcTagEditorScreen(
                     SettingsRow(
                         icon = Icons.Filled.Timer,
                         title = stringResource(R.string.lock_length),
-                        summary = formatDurationLabel(seconds * 1_000),
+                        summary = formatLengthLabel(seconds * 1_000),
                         onClick = { editing = TagDialog.LENGTH },
                     )
                 }
