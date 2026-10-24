@@ -21,6 +21,9 @@ object OemProfiles {
         "com.google.android.photopicker", "com.android.photopicker", // photo picker (Android 14+)
         "com.google.android.providers.media.module", "com.android.providers.media.module", // photo picker before 14
         "com.android.intentresolver", // share sheet (Android 14+)
+        // Android's ExtServices draws the keyboard's inline autofill chips in its own window when a
+        // text box gets focus (e.g. WhatsApp swipe-to-reply). It has no screens of its own.
+        "com.google.android.ext.services", "com.android.ext.services",
     )
 
     /** The Google app, which hosts the Gemini / Assistant popup (power-button hold, corner swipe). */
