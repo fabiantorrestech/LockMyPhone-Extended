@@ -65,7 +65,8 @@ fun LockSettingsSections(
     lockId: String?,
     lengthTitle: String,
     onChange: (LockSettings) -> Unit,
-    onEditAllowedApps: () -> Unit,
+    /** Opens the allowed-apps list; null when another app keeps it in sync (shown, not editable). */
+    onEditAllowedApps: (() -> Unit)?,
 ) {
     val context = LocalContext.current
     var editing by remember { mutableStateOf<LockDialog?>(null) }

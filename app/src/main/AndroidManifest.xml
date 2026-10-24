@@ -64,6 +64,11 @@
         </intent>
     </queries>
 
+    <!-- Only apps signed with this app's key may keep a profile in sync (ADR 0008). -->
+    <permission
+        android:name="com.fabiantorrestech.lockmyphone_extended.permission.MANAGE_PROFILES"
+        android:protectionLevel="signature" />
+
     <application
         android:name=".LockApp"
         android:allowBackup="true"
@@ -234,6 +239,16 @@
         <receiver
             android:name=".trigger.location.PlaceRefreshReceiver"
             android:exported="false" />
+
+        <!-- A companion app signed with the same key keeps a profile of its own in sync (ADR 0008). -->
+        <receiver
+            android:name=".trigger.ProfileSyncReceiver"
+            android:exported="true"
+            android:permission="com.fabiantorrestech.lockmyphone_extended.permission.MANAGE_PROFILES">
+            <intent-filter>
+                <action android:name="com.fabiantorrestech.lockmyphone_extended.action.SYNC_PROFILE" />
+            </intent-filter>
+        </receiver>
 
         <!-- Public intent API for automation apps (MacroDroid, Tasker). See IntentApiReceiver. -->
         <receiver

@@ -271,6 +271,7 @@ object BackupJson {
         put("dndEnabled", p.dndEnabled); put("dndLevel", p.dndLevel.name); put("grayscale", p.grayscale)
         put("unlockResumeMode", p.unlockResumeMode.name); put("unlockChoiceSeconds", p.unlockChoiceSeconds)
         put("icon", p.icon ?: JSONObject.NULL); put("sortOrder", p.sortOrder)
+        put("managedBy", p.managedBy ?: JSONObject.NULL)
     }
 
     private fun profileFromJson(o: JSONObject) = LockProfile(
@@ -282,7 +283,7 @@ object BackupJson {
         grayscale = o.optBoolean("grayscale"),
         unlockResumeMode = enumOr(o.optString("unlockResumeMode"), UnlockResumeMode.RESUME_APP),
         unlockChoiceSeconds = o.optInt("unlockChoiceSeconds", 3), icon = o.optStringOrNull("icon"),
-        sortOrder = o.optInt("sortOrder"),
+        sortOrder = o.optInt("sortOrder"), managedBy = o.optStringOrNull("managedBy"),
     )
 
     private fun scheduleToJson(s: LockSchedule) = JSONObject().apply {

@@ -27,6 +27,8 @@ import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
  *   [UnlockResumeMode.SHOW_LOCK_SCREEN]. Added in DB version 5.
  * @param hiddenPackages allowed apps not shown in the lock-screen list (e.g. the camera); a subset
  *   of [allowedPackages]. Added in DB version 26.
+ * @param managedBy the app that keeps this profile's apps in sync (ADR 0008), or null for the
+ *   user's own. Its apps can't be edited here. Added in DB version 27.
  */
 @Entity(tableName = "profiles", indices = [Index(value = ["name"], unique = true)])
 data class LockProfile(
@@ -47,6 +49,7 @@ data class LockProfile(
     @ColumnInfo(defaultValue = "0") val grayscale: Boolean = false,
     @ColumnInfo(defaultValue = "") val nfcUnlockTagIds: Set<String> = emptySet(),
     @ColumnInfo(defaultValue = "") val hiddenPackages: Set<String> = emptySet(),
+    val managedBy: String? = null,
 ) {
 
     val bypassDelayMs: Long? get() = if (bypassEnabled) bypassWaitMinutes * 60_000L else null

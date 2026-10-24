@@ -66,6 +66,9 @@ fun ProfileEditorScreen(
         if (isDefaults) {
             Text(stringResource(R.string.lock_defaults_hint), style = MaterialTheme.typography.bodyMedium)
         } else {
+            if (draft.managedBy != null) {
+                Text(stringResource(R.string.profile_managed_note), style = MaterialTheme.typography.bodyMedium)
+            }
             SettingsSection(stringResource(R.string.section_basics)) {
                 Column(SectionContentPadding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedTextField(
@@ -89,7 +92,7 @@ fun ProfileEditorScreen(
             lockId = draft.id.takeIf { !isDefaults && it != 0L }?.toString(),
             lengthTitle = stringResource(R.string.profile_default_duration),
             onChange = { onDraftChange(draft.withLockSettings(it)) },
-            onEditAllowedApps = onEditAllowedApps,
+            onEditAllowedApps = onEditAllowedApps.takeIf { draft.managedBy == null },
         )
     }
 

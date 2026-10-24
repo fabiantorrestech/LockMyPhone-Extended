@@ -5,6 +5,7 @@
 
 | ADR | Title | Status | Supersedes |
 | --- | --- | --- | --- |
+| [0008](0008-accountabilibuddy-keeps-its-own-profile-in-sync-over-a-signature-guarded-intent.md) | AccountabiliBuddy keeps its own profile in sync over a signature-guarded intent | Accepted | — |
 | [0007](0007-unlocks-open-the-countdown-and-not-allowed-apps-get-a-warning-overlay.md) | Unlocks open the countdown, and not-allowed apps get a warning overlay | Accepted | — |
 | [0006](0006-native-beacon-handling-matched-by-device-or-format.md) | Native beacon handling, matched by device or format | Accepted | — |
 | [0005](0005-one-lock-at-a-time-ranked-by-kind.md) | One lock at a time, ranked by kind | Accepted | — |
