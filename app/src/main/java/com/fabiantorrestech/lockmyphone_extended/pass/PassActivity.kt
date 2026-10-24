@@ -12,6 +12,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,11 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,7 +32,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -43,9 +40,9 @@ import androidx.compose.ui.unit.sp
 import com.fabiantorrestech.lockmyphone_extended.LockApp
 import com.fabiantorrestech.lockmyphone_extended.MainActivity
 import com.fabiantorrestech.lockmyphone_extended.R
-import com.fabiantorrestech.lockmyphone_extended.core.apps.AppMatch
 import com.fabiantorrestech.lockmyphone_extended.core.apps.LaunchableApp
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockState
+import com.fabiantorrestech.lockmyphone_extended.data.PhoneButton
 import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
 import com.fabiantorrestech.lockmyphone_extended.ui.AppIcon
 import com.fabiantorrestech.lockmyphone_extended.ui.AppInfoMenu
@@ -140,7 +137,15 @@ class PassActivity : ComponentActivity() {
                 BackHandler { openCountdown() }
                 val listState = rememberLazyListState()
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Column(Modifier.padding(innerPadding).fillMaxSize()) {
+                    var searching by remember { mutableStateOf(false) }
+                    // Consumed, so the search's keyboard padding doesn't count the gesture bar twice.
+                    Column(
+                        Modifier
+                            .padding(innerPadding)
+                            .consumeWindowInsets(innerPadding)
+                            .fillMaxSize()
+                            .cancelSearchOnTap(searching) { searching = false },
+                    ) {
                         val lockNow by container.lockController.state.collectAsState()
                         val endMs = (lockNow as? LockState.Locked)?.session?.effectiveEndMs
                         Row(
@@ -163,11 +168,28 @@ class PassActivity : ComponentActivity() {
                                 )
                             }
                         }
+                        val phoneCorner = when (pickerStyle.phoneButton) {
+                            PhoneButton.BOTTOM_RIGHT -> Alignment.BottomEnd
+                            PhoneButton.BOTTOM_LEFT -> Alignment.BottomStart
+                            PhoneButton.IN_LIST -> null
+                        }
+                        val dial = {
+                            launch(container.appCatalog.dialIntent())
+                            finish()
+                        }
+                        val openApp = { app: LaunchableApp ->
+                            container.appCatalog.launchIntent(app.packageName)?.let(::launch)
+                            finish()
+                        }
                         Box(Modifier.weight(1f).fillMaxWidth()) {
-                            LazyColumn(state = listState) {
+                            LazyColumn(
+                                state = listState,
+                                // The last row stays clear of the corner buttons.
+                                contentPadding = PaddingValues(bottom = PickerCornerClearance),
+                            ) {
                                 // Space where the "Allowed apps" heading was: the clock says enough.
                                 item { Spacer(Modifier.height(64.dp)) }
-                                item {
+                                if (phoneCorner == null) item {
                                     ListItem(
                                         leadingContent = if (showIcons) {
                                             {
@@ -179,19 +201,8 @@ class PassActivity : ComponentActivity() {
                                             null
                                         },
                                         headlineContent = { appName(stringResource(R.string.notif_action_phone)) },
-                                        modifier = Modifier.clickable {
-                                            launch(container.appCatalog.dialIntent())
-                                            finish()
-                                        },
+                                        modifier = Modifier.clickable(onClick = dial),
                                     )
-                                }
-                                if (hiddenApps.isNotEmpty()) {
-                                    item(key = "search") {
-                                        HiddenAppSearch(hiddenApps, showIcons, appName) { app ->
-                                            container.appCatalog.launchIntent(app.packageName)?.let(::launch)
-                                            finish()
-                                        }
-                                    }
                                 }
                                 // A place's lock: check right here whether you've left, without going back.
                                 if (container.notifications.isRefreshable(state.session)) {
@@ -212,66 +223,34 @@ class PassActivity : ComponentActivity() {
                                             null
                                         },
                                         headlineContent = { appName(app.label) },
-                                        modifier = Modifier.clickable {
-                                            container.appCatalog.launchIntent(app.packageName)?.let(::launch)
-                                            finish()
-                                        },
+                                        modifier = Modifier.clickable { openApp(app) },
                                     )
                                 }
                             }
                             FastScrollbar(listState, Modifier.align(Alignment.CenterEnd))
+                            phoneCorner?.let { CornerPhoneButton(it, onDial = dial) }
+                            // Hidden allowed apps: never listed, only found by this search (Enter, near-exact name).
+                            if (hiddenApps.isNotEmpty()) {
+                                CornerSearch(
+                                    corner = if (phoneCorner == Alignment.BottomStart) Alignment.BottomEnd else Alignment.BottomStart,
+                                    faintIcon = pickerStyle.faintSearchIcon,
+                                    hiddenApps = hiddenApps,
+                                    searching = searching,
+                                    onSearchingChange = { searching = it },
+                                ) { app ->
+                                    ListItem(
+                                        leadingContent = if (showIcons) {
+                                            { AppIcon(app.packageName, container.appCatalog) }
+                                        } else {
+                                            null
+                                        },
+                                        headlineContent = { appName(app.label) },
+                                        modifier = Modifier.clickable { openApp(app) },
+                                    )
+                                }
+                            }
                         }
                     }
-                }
-            }
-        }
-    }
-
-    /**
-     * The search for hidden allowed apps: nothing shows while typing; Enter shows the apps whose name the text is, or
-     * nearly is ([AppMatch]). Changing the text clears the results again.
-     */
-    @Composable
-    private fun HiddenAppSearch(
-        hiddenApps: List<LaunchableApp>,
-        showIcons: Boolean,
-        appName: @Composable (String) -> Unit,
-        onOpen: (LaunchableApp) -> Unit,
-    ) {
-        var query by remember { mutableStateOf("") }
-        var results by remember { mutableStateOf<List<LaunchableApp>?>(null) }
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = {
-                    query = it
-                    results = null
-                },
-                singleLine = true,
-                placeholder = { Text(stringResource(R.string.picker_search_hint)) },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = {
-                    results = hiddenApps.filter { AppMatch.matches(query, it.label) }.sortedBy { it.label.lowercase() }
-                }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            when {
-                results == null -> Unit
-                results!!.isEmpty() -> Text(
-                    stringResource(R.string.picker_search_none),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-                else -> results!!.forEach { app ->
-                    ListItem(
-                        leadingContent = if (showIcons) {
-                            { AppIcon(app.packageName, container.appCatalog) }
-                        } else {
-                            null
-                        },
-                        headlineContent = { appName(app.label) },
-                        modifier = Modifier.clickable { onOpen(app) },
-                    )
                 }
             }
         }

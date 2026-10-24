@@ -150,6 +150,9 @@ class SettingsStore(context: Context) {
             font = FontChoice.fromId(prefs.getString(KEY_PICKER_FONT, null)),
             hideStatusBar = prefs.getBoolean(KEY_PICKER_HIDE_STATUS_BAR, true),
             showTimeLeft = prefs.getBoolean(KEY_PICKER_SHOW_TIME_LEFT, true),
+            phoneButton = PhoneButton.entries.firstOrNull { it.name == prefs.getString(KEY_PICKER_PHONE_BUTTON, null) }
+                ?: PhoneButton.BOTTOM_RIGHT,
+            faintSearchIcon = prefs.getBoolean(KEY_PICKER_FAINT_SEARCH, true),
         ).clamped()
     )
     val pickerStyle: StateFlow<PickerStyle> = _pickerStyle.asStateFlow()
@@ -162,6 +165,8 @@ class SettingsStore(context: Context) {
             putString(KEY_PICKER_FONT, clamped.font.id)
             putBoolean(KEY_PICKER_HIDE_STATUS_BAR, clamped.hideStatusBar)
             putBoolean(KEY_PICKER_SHOW_TIME_LEFT, clamped.showTimeLeft)
+            putString(KEY_PICKER_PHONE_BUTTON, clamped.phoneButton.name)
+            putBoolean(KEY_PICKER_FAINT_SEARCH, clamped.faintSearchIcon)
         }
         _pickerStyle.value = clamped
     }
@@ -702,5 +707,7 @@ class SettingsStore(context: Context) {
         const val KEY_PICKER_FONT = "picker_font"
         const val KEY_PICKER_HIDE_STATUS_BAR = "picker_hide_status_bar"
         const val KEY_PICKER_SHOW_TIME_LEFT = "picker_show_time_left"
+        const val KEY_PICKER_PHONE_BUTTON = "picker_phone_button"
+        const val KEY_PICKER_FAINT_SEARCH = "picker_faint_search"
     }
 }

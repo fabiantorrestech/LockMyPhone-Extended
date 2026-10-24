@@ -119,7 +119,8 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:taskAffinity=""
-            android:theme="@style/Theme.LockMyPhoneExtended" />
+            android:theme="@style/Theme.LockMyPhoneExtended"
+            android:windowSoftInputMode="adjustResize" />
 
         <service
             android:name=".core.enforce.LockAccessibilityService"

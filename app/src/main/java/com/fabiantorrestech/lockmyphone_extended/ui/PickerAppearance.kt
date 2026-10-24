@@ -26,6 +26,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -58,6 +61,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.fabiantorrestech.lockmyphone_extended.R
 import com.fabiantorrestech.lockmyphone_extended.data.FontChoice
 import com.fabiantorrestech.lockmyphone_extended.data.FontLibrary
+import com.fabiantorrestech.lockmyphone_extended.data.PhoneButton
 import com.fabiantorrestech.lockmyphone_extended.data.PickerStyle
 import com.fabiantorrestech.lockmyphone_extended.data.SystemFont
 import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
@@ -191,6 +195,12 @@ private fun Context.findActivity(): Activity? {
     return null
 }
 
+private fun PhoneButton.labelRes(): Int = when (this) {
+    PhoneButton.BOTTOM_RIGHT -> R.string.picker_phone_bottom_right
+    PhoneButton.BOTTOM_LEFT -> R.string.picker_phone_bottom_left
+    PhoneButton.IN_LIST -> R.string.picker_phone_in_list
+}
+
 /** State and actions for the "Allowed-apps screen" settings. */
 class PickerAppearance(
     val style: PickerStyle,
@@ -228,6 +238,18 @@ fun PickerAppearanceSection(appearance: PickerAppearance) {
         SwitchRow(stringResource(R.string.picker_show_time_left), style.showTimeLeft) {
             appearance.onStyleChange(style.copy(showTimeLeft = it))
         }
+        Text(stringResource(R.string.picker_phone_button))
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            PhoneButton.entries.forEachIndexed { index, option ->
+                SegmentedButton(
+                    selected = style.phoneButton == option,
+                    onClick = { appearance.onStyleChange(style.copy(phoneButton = option)) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = PhoneButton.entries.size),
+                ) {
+                    Text(stringResource(option.labelRes()), maxLines = 1)
+                }
+            }
+        }
 
         Text(stringResource(R.string.picker_clock_size, preview.clockSizeSp))
         Slider(
@@ -249,6 +271,12 @@ fun PickerAppearanceSection(appearance: PickerAppearance) {
             TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.setup_advanced_options)) }
         }
         if (advanced && isPro()) {
+            SwitchRow(stringResource(R.string.picker_faint_search), style.faintSearchIcon) {
+                appearance.onStyleChange(style.copy(faintSearchIcon = it))
+            }
+            if (!style.faintSearchIcon) {
+                Text(stringResource(R.string.picker_faint_search_off), style = MaterialTheme.typography.bodySmall)
+            }
             SettingsRow(
                 icon = null,
                 title = stringResource(R.string.picker_font),

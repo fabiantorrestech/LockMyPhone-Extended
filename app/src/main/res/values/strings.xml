@@ -100,7 +100,7 @@
     <string name="refresh_not_place">This lock doesn\'t end when you leave a place.</string>
     <string name="notif_action_more">More…</string>
     <string name="picker_title">Allowed apps</string>
-    <string name="picker_search_hint">Hidden app: type its name, press Enter</string>
+    <string name="picker_search_hint">Type a hidden app\'s name, then Enter</string>
     <string name="picker_search_none">No match. Type the app\'s exact name.</string>
     <string name="pass_refused">That app is not allowed during this lock.</string>
     <string name="pass_app_missing">That app cannot be opened.</string>
@@ -262,6 +262,13 @@
     <string name="picker_app_info_note">Force stop or check an allowed app. Going to any other Settings page locks the phone again.</string>
     <string name="picker_app_info_unavailable">App info can\'t be opened right now</string>
     <string name="picker_show_time_left">Show the time left (top right)</string>
+    <string name="picker_phone_button">Phone button</string>
+    <string name="picker_phone_bottom_right">Bottom right</string>
+    <string name="picker_phone_bottom_left">Bottom left</string>
+    <string name="picker_phone_in_list">In the list</string>
+    <string name="picker_faint_search">Show the hidden-app search icon faintly</string>
+    <string name="picker_faint_search_off">Off: the icon is invisible; tap its bottom corner.</string>
+    <string name="picker_search_open">Search hidden apps</string>
     <string name="during_lock_title">During a lock</string>
     <string name="home_action_title">Home opens…</string>
     <string name="home_action_allowed_apps">Allowed apps</string>

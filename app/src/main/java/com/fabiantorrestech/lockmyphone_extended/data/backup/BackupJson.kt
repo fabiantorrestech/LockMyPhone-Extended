@@ -7,6 +7,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.lock.HomeAction
 import com.fabiantorrestech.lockmyphone_extended.data.BypassDefaults
 import com.fabiantorrestech.lockmyphone_extended.data.FontChoice
 import com.fabiantorrestech.lockmyphone_extended.data.LockDefaults
+import com.fabiantorrestech.lockmyphone_extended.data.PhoneButton
 import com.fabiantorrestech.lockmyphone_extended.data.PickerStyle
 import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
 import com.fabiantorrestech.lockmyphone_extended.data.UiMode
@@ -181,6 +182,8 @@ object BackupJson {
         put("pickerFont", s.pickerStyle.font.id)
         put("pickerHideStatusBar", s.pickerStyle.hideStatusBar)
         put("pickerShowTimeLeft", s.pickerStyle.showTimeLeft)
+        put("pickerPhoneButton", s.pickerStyle.phoneButton.name)
+        put("pickerFaintSearch", s.pickerStyle.faintSearchIcon)
         put("alarmDayStartMinutes", s.alarmDayStartMinutes)
         put("locationEngine", s.locationEngine.name)
         put("calendarSkipDeclined", s.calendarSkipDeclined)
@@ -234,6 +237,8 @@ object BackupJson {
                 font = FontChoice.fromId(o.optStringOrNull("pickerFont")),
                 hideStatusBar = o.optBoolean("pickerHideStatusBar", true),
                 showTimeLeft = o.optBoolean("pickerShowTimeLeft", true),
+                phoneButton = enumOr(o.optString("pickerPhoneButton"), PhoneButton.BOTTOM_RIGHT),
+                faintSearchIcon = o.optBoolean("pickerFaintSearch", true),
             ).clamped(),
             alarmDayStartMinutes = o.optInt("alarmDayStartMinutes", 120),
             locationEngine = enumOr(o.optString("locationEngine"), LocationEngineChoice.PLAY_SERVICES),

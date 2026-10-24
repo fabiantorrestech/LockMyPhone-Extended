@@ -12,6 +12,10 @@ data class PickerStyle(
     val hideStatusBar: Boolean = true,
     /** Show the time left in the top-right of the allowed-apps list. */
     val showTimeLeft: Boolean = true,
+    /** Where the allowed-apps list puts its Phone button. */
+    val phoneButton: PhoneButton = PhoneButton.BOTTOM_RIGHT,
+    /** The hidden-app search icon shows faintly; off, it's invisible (you tap its corner). */
+    val faintSearchIcon: Boolean = true,
 ) {
     fun clamped(): PickerStyle = copy(
         clockSizeSp = clockSizeSp.coerceIn(CLOCK_SIZE_RANGE),
@@ -24,6 +28,15 @@ data class PickerStyle(
         const val DEFAULT_CLOCK_SIZE_SP = 64
         const val DEFAULT_APP_NAME_SIZE_SP = 20
     }
+}
+
+/** Where the allowed-apps list puts its Phone button. */
+enum class PhoneButton {
+    BOTTOM_RIGHT,
+    BOTTOM_LEFT,
+
+    /** A row at the top of the list, as before 0.11. */
+    IN_LIST,
 }
 
 /**
