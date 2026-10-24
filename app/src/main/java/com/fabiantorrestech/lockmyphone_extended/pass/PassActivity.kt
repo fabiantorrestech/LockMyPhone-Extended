@@ -21,12 +21,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -35,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import com.fabiantorrestech.lockmyphone_extended.LockApp
 import com.fabiantorrestech.lockmyphone_extended.MainActivity
 import com.fabiantorrestech.lockmyphone_extended.R
+import com.fabiantorrestech.lockmyphone_extended.core.apps.AppMatch
 import com.fabiantorrestech.lockmyphone_extended.core.apps.LaunchableApp
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockState
 import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
@@ -107,6 +116,10 @@ class PassActivity : ComponentActivity() {
             .filter { it != dialer && it !in state.session.hiddenPackages }
             .map { LaunchableApp(it, container.appCatalog.label(it)) }
             .sortedBy { it.label.lowercase() }
+        // Hidden allowed apps: never listed, only found by the search below (Enter, near-exact name).
+        val hiddenApps = state.session.allowedPackages
+            .filter { it != dialer && it in state.session.hiddenPackages }
+            .map { LaunchableApp(it, container.appCatalog.label(it)) }
         // App info lists every allowed app, hidden ones and the dialer included.
         val appInfoApps = state.session.allowedPackages
             .map { LaunchableApp(it, container.appCatalog.label(it)) }
@@ -172,6 +185,14 @@ class PassActivity : ComponentActivity() {
                                         },
                                     )
                                 }
+                                if (hiddenApps.isNotEmpty()) {
+                                    item(key = "search") {
+                                        HiddenAppSearch(hiddenApps, showIcons, appName) { app ->
+                                            container.appCatalog.launchIntent(app.packageName)?.let(::launch)
+                                            finish()
+                                        }
+                                    }
+                                }
                                 // A place's lock: check right here whether you've left, without going back.
                                 if (container.notifications.isRefreshable(state.session)) {
                                     item {
@@ -201,6 +222,56 @@ class PassActivity : ComponentActivity() {
                             FastScrollbar(listState, Modifier.align(Alignment.CenterEnd))
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /**
+     * The search for hidden allowed apps: nothing shows while typing; Enter shows the apps whose name the text is, or
+     * nearly is ([AppMatch]). Changing the text clears the results again.
+     */
+    @Composable
+    private fun HiddenAppSearch(
+        hiddenApps: List<LaunchableApp>,
+        showIcons: Boolean,
+        appName: @Composable (String) -> Unit,
+        onOpen: (LaunchableApp) -> Unit,
+    ) {
+        var query by remember { mutableStateOf("") }
+        var results by remember { mutableStateOf<List<LaunchableApp>?>(null) }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = {
+                    query = it
+                    results = null
+                },
+                singleLine = true,
+                placeholder = { Text(stringResource(R.string.picker_search_hint)) },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = {
+                    results = hiddenApps.filter { AppMatch.matches(query, it.label) }.sortedBy { it.label.lowercase() }
+                }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            when {
+                results == null -> Unit
+                results!!.isEmpty() -> Text(
+                    stringResource(R.string.picker_search_none),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                else -> results!!.forEach { app ->
+                    ListItem(
+                        leadingContent = if (showIcons) {
+                            { AppIcon(app.packageName, container.appCatalog) }
+                        } else {
+                            null
+                        },
+                        headlineContent = { appName(app.label) },
+                        modifier = Modifier.clickable { onOpen(app) },
+                    )
                 }
             }
         }

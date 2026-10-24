@@ -101,6 +101,8 @@
     <string name="refresh_not_place">This lock doesn\'t end when you leave a place.</string>
     <string name="notif_action_more">More…</string>
     <string name="picker_title">Allowed apps</string>
+    <string name="picker_search_hint">Hidden app: type its name, press Enter</string>
+    <string name="picker_search_none">No match. Type the app\'s exact name.</string>
     <string name="pass_refused">That app is not allowed during this lock.</string>
     <string name="pass_app_missing">That app cannot be opened.</string>
 
