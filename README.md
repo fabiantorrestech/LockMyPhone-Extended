@@ -4,7 +4,7 @@ An Android app that locks your phone for a set time, and keeps it locked. It rec
 
 On top of that it adds automatic triggers (schedules, alarms, places, other apps), allowed-app passes, a timed early-unlock escape hatch, Do Not Disturb and grayscale during locks, and device-aware handling of each manufacturer's system screens.
 
-> **Status: 0.10.0 pre-release.** The core lock, passes, schedules, early unlock and intent API have been tested on a Pixel 7 and the Android emulator. Several newer features (listed under [Test status](#test-status)) are built but not yet tested on a device. Emergency mode isn't built yet.
+> **Status: 0.11.0 pre-release.** The core lock, passes, schedules, early unlock and intent API have been tested on a Pixel 7 and the Android emulator. Several newer features (listed under [Test status](#test-status)) are built but not yet tested on a device. Emergency mode isn't built yet.
 
 ---
 
@@ -44,6 +44,10 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
 - **Assistant popup:** optional (Settings → During a lock, or in the setup assistant; off by default). Allows only the Gemini / Assistant popup from the power button or a corner swipe; the full Google and Gemini apps still lock.
 - **Popups from other apps** (Pro): pick apps whose popups, bubbles and overlays may show over an allowed app (e.g. a password manager's autofill). Their own screens still lock.
 - **Why did it lock?** (Settings → During a lock): the last 20 times something outside your allowed apps came to the front, with the app and window, whether it was a screen or a popup, and the app it covered. A popup's app can be allowed in one tap.
+- **Limited locks** (a profile's *Lock style*): any app, in short sessions. Every unlock after a cooldown gets a full session (5 min by default); when it's used up, or the screen stays off for more than 10 s, a cooldown starts: 2 min, then a minute longer each time, up to 10. Only time in other apps counts: the profile's allowed apps, the phone and the system are free, and still work during a cooldown. A look of under 30 s is free, 3 times a lock. Warnings at 1 minute and 15 seconds left. Pro sets the step, the longest cooldown and the quick looks.
+- **Going back to sleep** (Morning lock): woke up too early? Once it has locked today, its countdown screen and its Automations card offer *🌙 Going back to sleep*. It doesn't end the lock; it locks again, in full, at your next wake-up (a dismissed alarm, or an unlock after 30+ minutes without one). Once a morning. With *alarm first*, the hour now counts from when the alarm stopped ringing.
+- **Allowed-apps list:** the Phone button sits in a bottom corner (Look and feel: bottom right, bottom left, or in the list). Hidden apps are found with a faint search icon in the other corner: no text box, the typed text shows across the bottom, Enter shows the match; Back or a tap anywhere else cancels.
+- **Accountabilibuddy profile:** the companion app keeps an *Accountabilibuddy* profile in sync with its Essentials ([ADR 0008](doc/adr/0008-accountabilibuddy-keeps-its-own-profile-in-sync-over-a-signature-guarded-intent.md)). Its apps are read-only here; its length and other settings are yours.
 - **Accessibility overlays** (e.g. a grayscale app) don't count as leaving an allowed app.
 - **Back to where you were:** if the screen turns off inside an allowed app, unlocking can either return you to that app, or show the countdown screen and lock again after a few seconds unless you pick an app. You choose this per profile.
 - **Early unlock:** optional, per lock. Request it from the lock-screen notification, then wait N minutes before the lock ends. It can be cancelled.
@@ -252,6 +256,7 @@ Send a **broadcast** explicitly to package `com.fabiantorrestech.lockmyphone_ext
 |---|---|
 | `com.fabiantorrestech.lockmyphone_extended.action.START_LOCK` | `profile` (a profile name; without it, Quick lock is used), plus optionally `duration_min` or `duration_sec`. It replaces a running manual lock; any other running lock refuses it. |
 | `com.fabiantorrestech.lockmyphone_extended.action.STOP_LOCK` | `token`: the secret shown in **Settings → Intent API**. Only works when "Allow stopping a lock by intent" is on. |
+| `com.fabiantorrestech.lockmyphone_extended.action.SYNC_PROFILE` | Only from apps signed with this app's key (permission `…permission.MANAGE_PROFILES`, ADR 0008): `manager`, `name`, `allowed` and `hidden` (string arrays). Used by Accountabilibuddy. Install LockMyPhone-Extended first; an app installed before it doesn't get the permission until it's reinstalled. |
 
 Example (adb):
 ```sh
@@ -340,6 +345,7 @@ These are the same as Lock My Phone; they can't be fixed without Device Owner:
 - **ADB** or a **factory reset** can remove the app.
 - **Samsung and Nothing device profiles** are unverified. Use **Settings → Diagnostics → Copy** to help confirm them.
 - **Android 11:** lock-screen notification buttons may ask you to unlock first; the phone locks again right after.
+- **Screen lock set to *None*:** with no lock screen there's nothing to show the Phone, emergency or allowed-apps buttons on, so every screen-on locks again at once. Set at least *Swipe*.
 
 ---
 
