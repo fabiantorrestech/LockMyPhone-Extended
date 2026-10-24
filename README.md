@@ -4,7 +4,7 @@ An Android app that locks your phone for a set time, and keeps it locked. It rec
 
 On top of that it adds automatic triggers (schedules, alarms, places, other apps), allowed-app passes, a timed early-unlock escape hatch, Do Not Disturb and grayscale during locks, and device-aware handling of each manufacturer's system screens.
 
-> **Status: 0.9.0 pre-release.** The core lock, passes, schedules, early unlock and intent API have been tested on a Pixel 7 and the Android emulator. Several newer features (listed under [Test status](#test-status)) are built but not yet tested on a device. Emergency mode isn't built yet.
+> **Status: 0.10.0 pre-release.** The core lock, passes, schedules, early unlock and intent API have been tested on a Pixel 7 and the Android emulator. Several newer features (listed under [Test status](#test-status)) are built but not yet tested on a device. Emergency mode isn't built yet.
 
 ---
 
@@ -27,8 +27,11 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
 
 ### The lock
 - **Locks again on every unlock** during a lock, like Lock My Phone. The lock survives reboots and app updates, because the end time is stored as a wall-clock timestamp.
-- **Quick lock:** set the length (H:M:S or one-tap presets), allowed apps and options on the Quick lock tab, then tap **▶ Start** at the top. Everything is remembered for next time. ↻ copies your Lock defaults back in.
-- **Profiles:** named, reusable locks, each with an icon (built-in icons or any emoji). You can drag them to reorder, and start one with ▶ (it asks Cancel / Go and uses the profile's length).
+- **Simple and Pro mode:** Simple (the default) shows what most people need, with sensible defaults. Pro (Settings → How much to show) shows every fine-grained control: beacon timing and calibration tools, the location engine, the intent API, diagnostics… Switching back to Simple only hides them.
+- **Setup assistant:** on first start, and any time from Settings → Set-up assistant. It walks through the four permissions a lock needs, then the situations you lock your phone in (**Sleep**, **Focus**, **Study**, **Family time**), each of which becomes a ready-made profile, and optionally a nightly Sleep schedule (22:30 → 07:00 by default). Running it again never duplicates a profile or schedule.
+- **Essentials:** every starter profile allows Messages and Clock, plus the camera (hidden, so photos inside chats work). The phone app, emergency calls, Emergency SOS (5 presses of the power button) and the in-call screen always work in every lock. Focus adds your music and calendar apps; Study adds the calculator too.
+- **Lock tab:** Quick lock on top (pick a length or a preset, then **▶ Start**; *Options* holds its allowed apps and settings), then your profiles as tiles, each with its own ▶. Pro can reorder them.
+- **Profiles:** named, reusable locks, each with an icon (built-in icons or any emoji). Start one with ▶ (it asks Cancel / Go and uses the profile's length).
 - **Lock defaults:** a baseline that new profiles start from, and that Quick lock can copy.
 - **Countdown screen:** while locked, the app shows only the time left and the end time, so settings can't be changed mid-lock.
 
@@ -38,7 +41,9 @@ On top of that it adds automatic triggers (schedules, alarms, places, other apps
 - **Home during a lock:** by default, Home (or the app switcher) opens the allowed-apps list again. Settings → During a lock → *Home opens…* can make it open the countdown screen, or lock the phone instead.
 - **Hidden allowed apps:** 👁 next to a checked app keeps it allowed but out of the list. The camera is allowed and hidden by default, so "take a photo" in WhatsApp or Messages, and the double-press camera, work during a lock.
 - **System pickers:** the file picker, photo picker and share sheet always work inside allowed apps. Opening a file or sharing into another app still locks.
-- **Assistant popup:** optional (Settings → During a lock, off by default). Allows only the Gemini / Assistant popup from the power button or a corner swipe; the full Google and Gemini apps still lock.
+- **Assistant popup:** optional (Settings → During a lock, or in the setup assistant; off by default). Allows only the Gemini / Assistant popup from the power button or a corner swipe; the full Google and Gemini apps still lock.
+- **Popups from other apps** (Pro): pick apps whose popups, bubbles and overlays may show over an allowed app (e.g. a password manager's autofill). Their own screens still lock.
+- **Why did it lock?** (Settings → During a lock): the last 20 times something outside your allowed apps came to the front, with the app and window, whether it was a screen or a popup, and the app it covered. A popup's app can be allowed in one tap.
 - **Accessibility overlays** (e.g. a grayscale app) don't count as leaving an allowed app.
 - **Back to where you were:** if the screen turns off inside an allowed app, unlocking can either return you to that app, or show the countdown screen and lock again after a few seconds unless you pick an app. You choose this per profile.
 - **Early unlock:** optional, per lock. Request it from the lock-screen notification, then wait N minutes before the lock ends. It can be cancelled.
@@ -135,7 +140,7 @@ Requires **Android 11 (API 30)** or newer. Grayscale needs Android 15+.
 
 ## First-time setup
 
-The checklist on the **Settings** tab only shows what's still missing:
+The **setup assistant** opens on first start and asks for the permissions below, then offers the starter profiles. Afterwards, the checklist at the top of **Settings** shows only what's still missing:
 
 | Permission | Why |
 |---|---|

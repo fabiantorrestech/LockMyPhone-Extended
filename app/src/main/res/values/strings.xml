@@ -1199,7 +1199,7 @@
     <string name="relock_history_hint">The last times something outside your allowed apps came to the front during a lock. Only app and window names are kept.</string>
     <string name="relock_history_over">Over %1$s</string>
     <string name="relock_history_screen">A screen of another app. Screens always lock; add the app to the lock\'s allowed apps if you need it.</string>
-    <string name="relock_history_popup">A popup, bubble or overlay drawn over the app you were using.</string>
+    <string name="relock_history_popup">Not one of its screens: a popup, bubble or overlay over the app you were using, or the app just starting to open. Allowing its popups never lets its screens through.</string>
     <string name="relock_history_allow">Allow popups from %1$s</string>
     <string name="relock_history_allowed">✓ Its popups are allowed in new locks</string>
     <string name="relock_history_clear">Clear</string>
