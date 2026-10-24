@@ -74,6 +74,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.LockMyPhoneExtended">
+        <!-- Lets adb trace the release build to find dropped frames; it grants nothing else. -->
+        <profileable android:shell="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

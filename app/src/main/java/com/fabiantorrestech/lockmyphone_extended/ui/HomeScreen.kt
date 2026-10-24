@@ -66,6 +66,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -85,7 +87,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -212,132 +217,153 @@ fun HomeScreen(
         val granted = setup.grantedPermissions()
         // Each tab keeps its own scroll position while you switch between them.
         val scrollStates = HomeTab.entries.associateWith { rememberScrollState() }
+        // A tab stays composed once shown, so switching back to it is only a layout pass. Building a
+        // tab from scratch took 2-3 frames on a Pixel 5. The others are built one per frame once the
+        // first screen is up, so even the first switch is quick.
+        val composedTabs = remember { mutableStateListOf(selectedTab) }
+        if (selectedTab !in composedTabs) composedTabs += selectedTab
+        LaunchedEffect(Unit) {
+            delay(PRECOMPOSE_DELAY_MS)
+            HomeTab.entries.forEach { tab ->
+                if (tab !in composedTabs) {
+                    composedTabs += tab
+                    withFrameNanos { }
+                }
+            }
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            Column(
-                modifier = Modifier
-                    .verticalScroll(scrollStates.getValue(selectedTab))
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                when (selectedTab) {
-                    HomeTab.LOCK -> LockTab(
-                        profiles = profiles,
-                        adminActive = setup.adminActive,
-                        accessibilityEnabled = setup.accessibilityEnabled,
-                        granted = granted,
-                        quickLock = quickLock,
-                        presetsSec = presetsSec,
-                        onOpenSettings = { onTabChange(HomeTab.SETTINGS) },
-                        onEditProfile = onEditProfile,
-                        onReorderProfiles = reorderActions.onReorderProfiles,
-                        actions = startActions,
-                    )
-                    HomeTab.AUTOMATIONS -> {
-                        if (alarmTriggers.isNotEmpty() && !setup.notificationAccessGranted) {
-                            WarningBanner(
-                                text = stringResource(R.string.alarm_access_off_banner),
-                                primary = stringResource(R.string.setup_row_enable, stringResource(R.string.setup_notification_access)) to
-                                    setupActions.onGrantNotificationAccess,
+            HomeTab.entries.filter { it in composedTabs }.forEach { tab ->
+                key(tab) {
+                    Column(
+                        modifier = Modifier
+                            .shownOnlyIf(tab == selectedTab)
+                            // Its own layer, so showing or hiding it doesn't redraw the rest of the screen.
+                            .graphicsLayer()
+                            .verticalScroll(scrollStates.getValue(tab))
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        when (tab) {
+                            HomeTab.LOCK -> LockTab(
+                                profiles = profiles,
+                                adminActive = setup.adminActive,
+                                accessibilityEnabled = setup.accessibilityEnabled,
+                                granted = granted,
+                                quickLock = quickLock,
+                                presetsSec = presetsSec,
+                                onOpenSettings = { onTabChange(HomeTab.SETTINGS) },
+                                onEditProfile = onEditProfile,
+                                onReorderProfiles = reorderActions.onReorderProfiles,
+                                actions = startActions,
                             )
-                        }
-                        alarmProblems.forEach { problem -> AlarmProblemBanner(problem, alarmProblemActions) }
-                        // "Active in 0:45" on automations that changed less than a minute ago.
-                        val waitText = rememberCooldownText(cooldowns)
-                        // Morning lock's own sleep places are listed with it, not with the places.
-                        val sleepOwners = remember(wakeTriggers) { sleepPlaceOwners(wakeTriggers) }
-                        val (sleepPlaces, otherPlaces) = remember(locations, sleepOwners) {
-                            locations.partition { it.isMorningLockSleepPlace(sleepOwners) }
-                        }
-                        MorningLockCard(
-                            wakeTriggers, profiles, locations, onEditWake, granted,
-                            toggleActions.onToggleWake, { waitText(AutomationKey(LockKind.WAKE, it)) },
-                            sleepPlaces, onEditLocation,
-                        )
-                        SchedulesCard(
-                            schedules, profiles, onEditSchedule, reorderActions.onReorderSchedules, clashes.schedules,
-                            toggleActions.onToggleSchedule, { waitText(AutomationKey(LockKind.SCHEDULE, it)) },
-                        )
-                        AlarmTriggersCard(
-                            alarmTriggers, profiles, appLabel, onEditAlarmTrigger, reorderActions.onReorderTriggers, granted,
-                            toggleActions.onToggleAlarmTrigger, { waitText(AutomationKey(LockKind.ALARM, it)) },
-                        )
-                        LocationsCard(
-                            otherPlaces, profiles, onEditLocation, reorderActions.onReorderLocations, granted, clashes.places,
-                            toggleActions.onToggleLocation, { waitText(AutomationKey(LockKind.PLACE, it)) },
-                        )
-                        // Simple mode lists calendar triggers and NFC tags only once you have some.
-                        if (pro || calendarTriggers.isNotEmpty()) {
-                            CalendarCard(
-                                calendarTriggers, profiles, onEditCalendar, reorderActions.onReorderCalendars, granted, clashes.calendars,
-                                toggleActions.onToggleCalendar, { waitText(AutomationKey(LockKind.CALENDAR, it)) },
-                            )
-                        }
-                        if (pro || nfcTags.isNotEmpty()) {
-                            NfcTagsCard(
-                                nfcTags, profiles, setup.hasNfc, onEditNfcTag, reorderActions.onReorderNfcTags, granted,
-                                toggleActions.onToggleNfcTag, { waitText(AutomationKey(LockKind.NFC, it)) },
-                            )
-                        }
-                        if (!pro && (calendarTriggers.isEmpty() || (nfcTags.isEmpty() && setup.hasNfc))) {
-                            MoreKindsCard(
-                                showCalendar = calendarTriggers.isEmpty(),
-                                showNfc = nfcTags.isEmpty() && setup.hasNfc,
-                                onNewCalendar = { onEditCalendar(null) },
-                                onNewNfcTag = { onEditNfcTag(null) },
-                            )
-                        }
-                    }
-                    HomeTab.SETTINGS -> {
-                        ModeCard(uiMode, onUiModeChange)
-
-                        SettingsGroupHeader(stringResource(R.string.settings_group_setup))
-                        SetupChecklist(setup, setupActions)
-                        AssistantCard(onOpenAssistant)
-                        PermissionsCard(onOpenPermissions)
-                        BackupCard(backup, backupActions)
-
-                        SettingsGroupHeader(stringResource(R.string.settings_group_locks))
-                        LockDefaultsCard(onOpenLockDefaults)
-                        DuringLockCard(
-                            assistantPopupAllowed,
-                            onAssistantPopupChange,
-                            homeAction,
-                            onHomeActionChange,
-                            unlockIntoAllowedApp,
-                            onUnlockIntoAllowedAppChange,
-                            popupAppCount = popupAppCount.takeIf { pro },
-                            onEditPopupApps = onEditPopupApps,
-                            relocks = relocks,
-                            appLabel = appLabel,
-                        )
-                        if (pro) LengthPresetsCard(presetsSec, onPresetsChange)
-
-                        SettingsGroupHeader(stringResource(R.string.settings_group_look))
-                        AppearanceCard(themeMode, onThemeModeChange, showPickerIcons, onShowPickerIconsChange, pickerAppearance)
-
-                        if (pro) {
-                            SettingsGroupHeader(stringResource(R.string.tab_automations))
-                            AutomationCooldownCard(automationCooldown, onAutomationCooldownChange)
-                            AlarmDayStartCard(alarmDayStartMinutes, onAlarmDayStartChange)
-                            LocationEngineCard(locationEngine, playServicesAvailable, onLocationEngineChange)
-                            BeaconTimingCard(beaconPreset, beaconCustomTiming, onBeaconTimingChange)
-                            CalendarDefaultsCard(calendarSkipDeclined, calendarSkipFree, onCalendarDefaultsChange)
-                            if (setup.hasNfc) NfcGateCard(nfcGateSeconds, onNfcGateSecondsChange)
-
-                            SettingsGroupHeader(stringResource(R.string.settings_group_advanced))
-                            BeaconModeCard(beaconMode, onBeaconModeChange, setupActions.onAllowBackground)
-                            IntentApiCard(intentApi, intentApiActions)
-                            DeviceCard(deviceProfileName, onChangeDevice)
-                            OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) {
-                                Text(stringResource(R.string.diag_open))
+                            HomeTab.AUTOMATIONS -> {
+                                if (alarmTriggers.isNotEmpty() && !setup.notificationAccessGranted) {
+                                    WarningBanner(
+                                        text = stringResource(R.string.alarm_access_off_banner),
+                                        primary = stringResource(R.string.setup_row_enable, stringResource(R.string.setup_notification_access)) to
+                                            setupActions.onGrantNotificationAccess,
+                                    )
+                                }
+                                alarmProblems.forEach { problem -> AlarmProblemBanner(problem, alarmProblemActions) }
+                                // "Active in 0:45" on automations that changed less than a minute ago.
+                                val waitText = rememberCooldownText(cooldowns)
+                                // Morning lock's own sleep places are listed with it, not with the places.
+                                val sleepOwners = remember(wakeTriggers) { sleepPlaceOwners(wakeTriggers) }
+                                val (sleepPlaces, otherPlaces) = remember(locations, sleepOwners) {
+                                    locations.partition { it.isMorningLockSleepPlace(sleepOwners) }
+                                }
+                                MorningLockCard(
+                                    wakeTriggers, profiles, locations, onEditWake, granted,
+                                    toggleActions.onToggleWake, { waitText(AutomationKey(LockKind.WAKE, it)) },
+                                    sleepPlaces, onEditLocation,
+                                )
+                                SchedulesCard(
+                                    schedules, profiles, onEditSchedule, reorderActions.onReorderSchedules, clashes.schedules,
+                                    toggleActions.onToggleSchedule, { waitText(AutomationKey(LockKind.SCHEDULE, it)) },
+                                )
+                                AlarmTriggersCard(
+                                    alarmTriggers, profiles, appLabel, onEditAlarmTrigger, reorderActions.onReorderTriggers, granted,
+                                    toggleActions.onToggleAlarmTrigger, { waitText(AutomationKey(LockKind.ALARM, it)) },
+                                )
+                                LocationsCard(
+                                    otherPlaces, profiles, onEditLocation, reorderActions.onReorderLocations, granted, clashes.places,
+                                    toggleActions.onToggleLocation, { waitText(AutomationKey(LockKind.PLACE, it)) },
+                                )
+                                // Simple mode lists calendar triggers and NFC tags only once you have some.
+                                if (pro || calendarTriggers.isNotEmpty()) {
+                                    CalendarCard(
+                                        calendarTriggers, profiles, onEditCalendar, reorderActions.onReorderCalendars, granted, clashes.calendars,
+                                        toggleActions.onToggleCalendar, { waitText(AutomationKey(LockKind.CALENDAR, it)) },
+                                    )
+                                }
+                                if (pro || nfcTags.isNotEmpty()) {
+                                    NfcTagsCard(
+                                        nfcTags, profiles, setup.hasNfc, onEditNfcTag, reorderActions.onReorderNfcTags, granted,
+                                        toggleActions.onToggleNfcTag, { waitText(AutomationKey(LockKind.NFC, it)) },
+                                    )
+                                }
+                                if (!pro && (calendarTriggers.isEmpty() || (nfcTags.isEmpty() && setup.hasNfc))) {
+                                    MoreKindsCard(
+                                        showCalendar = calendarTriggers.isEmpty(),
+                                        showNfc = nfcTags.isEmpty() && setup.hasNfc,
+                                        onNewCalendar = { onEditCalendar(null) },
+                                        onNewNfcTag = { onEditNfcTag(null) },
+                                    )
+                                }
                             }
-                        } else {
-                            Text(
-                                stringResource(R.string.mode_more_in_pro),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 4.dp),
-                            )
+                            HomeTab.SETTINGS -> {
+                                ModeCard(uiMode, onUiModeChange)
+
+                                SettingsGroupHeader(stringResource(R.string.settings_group_setup))
+                                SetupChecklist(setup, setupActions)
+                                AssistantCard(onOpenAssistant)
+                                PermissionsCard(onOpenPermissions)
+                                BackupCard(backup, backupActions)
+
+                                SettingsGroupHeader(stringResource(R.string.settings_group_locks))
+                                LockDefaultsCard(onOpenLockDefaults)
+                                DuringLockCard(
+                                    assistantPopupAllowed,
+                                    onAssistantPopupChange,
+                                    homeAction,
+                                    onHomeActionChange,
+                                    unlockIntoAllowedApp,
+                                    onUnlockIntoAllowedAppChange,
+                                    popupAppCount = popupAppCount.takeIf { pro },
+                                    onEditPopupApps = onEditPopupApps,
+                                    relocks = relocks,
+                                    appLabel = appLabel,
+                                )
+                                if (pro) LengthPresetsCard(presetsSec, onPresetsChange)
+
+                                SettingsGroupHeader(stringResource(R.string.settings_group_look))
+                                AppearanceCard(themeMode, onThemeModeChange, showPickerIcons, onShowPickerIconsChange, pickerAppearance)
+
+                                if (pro) {
+                                    SettingsGroupHeader(stringResource(R.string.tab_automations))
+                                    AutomationCooldownCard(automationCooldown, onAutomationCooldownChange)
+                                    AlarmDayStartCard(alarmDayStartMinutes, onAlarmDayStartChange)
+                                    LocationEngineCard(locationEngine, playServicesAvailable, onLocationEngineChange)
+                                    BeaconTimingCard(beaconPreset, beaconCustomTiming, onBeaconTimingChange)
+                                    CalendarDefaultsCard(calendarSkipDeclined, calendarSkipFree, onCalendarDefaultsChange)
+                                    if (setup.hasNfc) NfcGateCard(nfcGateSeconds, onNfcGateSecondsChange)
+
+                                    SettingsGroupHeader(stringResource(R.string.settings_group_advanced))
+                                    BeaconModeCard(beaconMode, onBeaconModeChange, setupActions.onAllowBackground)
+                                    IntentApiCard(intentApi, intentApiActions)
+                                    DeviceCard(deviceProfileName, onChangeDevice)
+                                    OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) {
+                                        Text(stringResource(R.string.diag_open))
+                                    }
+                                } else {
+                                    Text(
+                                        stringResource(R.string.mode_more_in_pro),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 4.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -355,6 +381,22 @@ fun HomeScreen(
                 )
             }
         }
+    }
+}
+
+/** How long after the first screen the other tabs start being built in the background. */
+private const val PRECOMPOSE_DELAY_MS = 600L
+
+/**
+ * A hidden tab isn't placed, so it isn't drawn, can't be touched and isn't read by TalkBack. It
+ * stays composed and measured (both cached), so showing it again costs almost nothing.
+ */
+private fun Modifier.shownOnlyIf(visible: Boolean): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    if (visible) {
+        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+    } else {
+        layout(0, 0) {}
     }
 }
 
