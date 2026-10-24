@@ -184,6 +184,7 @@ fun LocationEditorScreen(
         modifier = modifier,
         automation = automation,
     ) {
+        if (draft.hasRemovedSignal) WarningNote(stringResource(R.string.place_removed_signal))
         if (sleepPlaceOf.isNotEmpty()) {
             WarningNote(
                 stringResource(

@@ -1203,4 +1203,5 @@
     <string name="relock_history_allow">Allow popups from %1$s</string>
     <string name="relock_history_allowed">✓ Its popups are allowed in new locks</string>
     <string name="relock_history_clear">Clear</string>
+    <string name="place_removed_signal">This place also used a paired Bluetooth device, which the app no longer supports. If it needs all of its signals, it won\'t count as \"here\" until you check its signals and Save.</string>
 </resources>

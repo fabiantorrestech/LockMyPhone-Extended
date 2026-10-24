@@ -65,6 +65,17 @@ class OemDetector(private val context: Context) {
             .toSet()
     }
 
+    /**
+     * Whether this app can see [packageName] (Android 11+ package visibility). For an app it can't
+     * see, [isActivity] can't tell its screens from its popups.
+     */
+    fun isVisible(packageName: String): Boolean = try {
+        context.packageManager.getPackageInfo(packageName, 0)
+        true
+    } catch (e: PackageManager.NameNotFoundException) {
+        false
+    }
+
     /** Whether [className] is an activity of [packageName], as opposed to an overlay or popup window. */
     fun isActivity(packageName: String, className: String?): Boolean {
         if (className == null) return false

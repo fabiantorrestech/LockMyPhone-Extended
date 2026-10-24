@@ -30,6 +30,7 @@ fun RelockHistoryDialog(
     appLabel: (String) -> String,
     popupPackages: Set<String>,
     onAllowPopups: (String) -> Unit,
+    canAllowPopups: (String) -> Boolean,
     onClear: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -42,7 +43,13 @@ fun RelockHistoryDialog(
                 if (entries.isEmpty()) Text(stringResource(R.string.relock_history_none))
                 entries.forEachIndexed { index, entry ->
                     if (index > 0) HorizontalDivider()
-                    RelockItem(entry, appLabel, allowed = entry.packageName in popupPackages, onAllowPopups = onAllowPopups)
+                    RelockItem(
+                        entry,
+                        appLabel,
+                        allowed = entry.packageName in popupPackages,
+                        canAllow = entry.className != null && canAllowPopups(entry.packageName),
+                        onAllowPopups = onAllowPopups,
+                    )
                 }
             }
         },
@@ -52,7 +59,7 @@ fun RelockHistoryDialog(
 }
 
 @Composable
-private fun RelockItem(entry: RelockEntry, appLabel: (String) -> String, allowed: Boolean, onAllowPopups: (String) -> Unit) {
+private fun RelockItem(entry: RelockEntry, appLabel: (String) -> String, allowed: Boolean, canAllow: Boolean, onAllowPopups: (String) -> Unit) {
     val label = appLabel(entry.packageName)
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(entry.timeMs)) + " · " + label, style = MaterialTheme.typography.titleSmall)
@@ -70,7 +77,7 @@ private fun RelockItem(entry: RelockEntry, appLabel: (String) -> String, allowed
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         when {
-            entry.isActivity -> Unit
+            entry.isActivity || !canAllow -> Unit
             allowed -> Text(stringResource(R.string.relock_history_allowed), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             else -> TextButton(onClick = { onAllowPopups(entry.packageName) }) {
                 Text(stringResource(R.string.relock_history_allow, label))

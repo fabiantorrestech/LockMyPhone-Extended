@@ -267,11 +267,14 @@ class AppContainer(context: Context) {
         val dao = database.profileDao()
         if (dao.count() > 0) return
         val bypass = settingsStore.bypassDefaults.value
+        val allowed = settingsStore.allowedPackages.value
         dao.insert(
             LockProfile(
                 name = appContext.getString(R.string.profile_default_name),
                 defaultDurationSec = DEFAULT_PROFILE_DURATION_SEC,
-                allowedPackages = settingsStore.allowedPackages.value,
+                allowedPackages = allowed,
+                // Quick lock's hidden apps (the camera) stay hidden here too.
+                hiddenPackages = settingsStore.quickHiddenPackages.value intersect allowed,
                 bypassEnabled = bypass.enabled,
                 bypassWaitMinutes = bypass.waitMinutes,
             )

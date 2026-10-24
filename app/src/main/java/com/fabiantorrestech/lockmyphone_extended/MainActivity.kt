@@ -392,9 +392,13 @@ class MainActivity : ComponentActivity() {
 
     /** Writes the assistant's choices, then shows the Lock tab. */
     private fun finishAssistant(result: SetupResult) {
+        // A second tap on Finish while the first is still writing would create everything twice.
+        if (finishingAssistant) return
+        finishingAssistant = true
         lifecycleScope.launch {
             val store = container.settingsStore
-            val installed = container.starterProfileInstaller.install(result.situations, result.bedtime)
+            val firstRun = !store.onboardingDone.value
+            val installed = container.starterProfileInstaller.install(result.situations, result.bedtime, firstRun)
             store.setAssistantPopupAllowed(result.assistantPopup)
             container.ensureDefaultProfile()
             // A new schedule waits its usual minute, so tonight's lock doesn't start mid-setup.
@@ -404,8 +408,11 @@ class MainActivity : ComponentActivity() {
             assistantOpen.value = false
             idle.screen.value = Screen.HOME
             idle.homeTab.value = HomeTab.LOCK
+            finishingAssistant = false
         }
     }
+
+    private var finishingAssistant = false
 
     /** "Start which lock?" after tapping a tag linked to several locks. */
     private val tagChooser = mutableStateOf<TapResult.ChooseLock?>(null)
@@ -916,6 +923,7 @@ class MainActivity : ComponentActivity() {
                     entries = container.lockController.relockLog.entries.collectAsState().value,
                     popupPackages = popupPackages,
                     onAllowPopups = { pkg -> container.settingsStore.setPopupPackages(container.settingsStore.popupPackages.value + pkg) },
+                    canAllowPopups = container.oemDetector::isVisible,
                     onClear = container.lockController.relockLog::clear,
                 ),
                 startActions = remember {
@@ -1242,7 +1250,7 @@ class MainActivity : ComponentActivity() {
                         scope.launch {
                             val dao = container.database.locationTriggerDao()
                             // A place without GPS keeps no coordinates, but the column can't hold "none".
-                            val place = if (draft.latitude.isNaN()) draft.copy(latitude = 0.0, longitude = 0.0) else draft
+                            val place = (if (draft.latitude.isNaN()) draft.copy(latitude = 0.0, longitude = 0.0) else draft).withoutRemovedSignals()
                             val id = if (place.id == 0L) dao.insertLast(place) else place.id.also { dao.update(place) }
                             val slots = if (draft.mode == LocationMode.TIME_SLOTS) slotDrafts else emptyList()
                             container.database.locationSlotDao().replaceForLocation(id, slots)

@@ -223,6 +223,17 @@ data class LocationTrigger(
 
     val usesCharger: Boolean get() = uses(PlaceSignal.CHARGER)
 
+    /**
+     * Saved with a signal that no longer exists (the paired Bluetooth device, removed in 0.10.0).
+     * With "all of them" such a place never counts as here, so it can't start locking on fewer
+     * signals than it was set up with; its editor asks you to pick its signals again.
+     */
+    val hasRemovedSignal: Boolean get() = signals.any { name -> PlaceSignal.entries.none { it.name == name } }
+
+    /** This place without signals that no longer exist; used when it's saved. */
+    fun withoutRemovedSignals(): LocationTrigger =
+        if (hasRemovedSignal) copy(signals = signals.filter { name -> PlaceSignal.entries.any { it.name == name } }.toSet()) else this
+
     companion object {
         const val DEFAULT_RADIUS_METERS = 100
         const val DEFAULT_BEACON_THRESHOLD = -75

@@ -376,6 +376,8 @@ class RelockUi(
     val popupPackages: Set<String>,
     val onAllowPopups: (String) -> Unit,
     val onClear: () -> Unit,
+    /** Whether popups from this app can be allowed (this app must be able to see it). */
+    val canAllowPopups: (String) -> Boolean,
 )
 
 /** Simple or Pro: the first card in Settings, in both modes. */
@@ -1332,6 +1334,7 @@ private fun DuringLockCard(
             appLabel = appLabel,
             popupPackages = relocks.popupPackages,
             onAllowPopups = relocks.onAllowPopups,
+            canAllowPopups = relocks.canAllowPopups,
             onClear = relocks.onClear,
             onDismiss = { showingRelocks = false },
         )

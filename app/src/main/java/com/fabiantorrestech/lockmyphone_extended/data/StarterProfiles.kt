@@ -113,9 +113,11 @@ class StarterProfileInstaller(
 
     /**
      * @param bedtime start and end minute of day for the Sleep profile's nightly schedule, or null for none.
+     * @param firstRun true on the first start only: then Lock defaults and Quick lock without apps get
+     *   the Essentials. A re-run from Settings never touches them.
      * @return whether any profile was created (so no "Default" profile is needed), and the new schedule.
      */
-    suspend fun install(situations: Set<Situation>, bedtime: Pair<Int, Int>?): InstallResult {
+    suspend fun install(situations: Set<Situation>, bedtime: Pair<Int, Int>?, firstRun: Boolean): InstallResult {
         val apps = essentials.essentials()
         val dao = database.profileDao()
         var created = false
@@ -126,7 +128,7 @@ class StarterProfileInstaller(
             created = true
         }
         val scheduleId = if (bedtime != null && Situation.SLEEP in situations) addBedtime(bedtime) else null
-        seedEssentials(apps)
+        if (firstRun) seedEssentials(apps)
         return InstallResult(created, scheduleId)
     }
 
@@ -139,18 +141,16 @@ class StarterProfileInstaller(
     }
 
     /**
-     * Lock defaults and Quick lock that still show no apps (only the hidden camera, or nothing) get
-     * the Essentials, an hour's length and a 10-minute early unlock. Lists you've picked are kept.
+     * First run: Lock defaults and Quick lock that still show no apps (only the hidden camera, or
+     * nothing) get the Essentials. Their length, early unlock and other settings are left alone.
      */
     private fun seedEssentials(apps: ResolvedApps) {
         val defaults = settings.lockDefaults.value
         if ((defaults.allowedPackages - defaults.hiddenPackages).isEmpty()) {
             settings.setLockDefaults(
                 defaults.copy(
-                    durationSec = HOUR,
                     allowedPackages = defaults.allowedPackages + apps.all,
                     hiddenPackages = defaults.hiddenPackages + apps.hidden,
-                    bypass = BypassDefaults(enabled = true, waitMinutes = 10),
                 )
             )
         }

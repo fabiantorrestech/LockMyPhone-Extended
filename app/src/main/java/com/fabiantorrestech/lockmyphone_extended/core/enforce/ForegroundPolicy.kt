@@ -40,8 +40,19 @@ class ForegroundPolicy(
             packageName in oemDetector.inputMethodPackages() ||
             isAccessibilityOverlay(packageName, className) ||
             (allowAssistantPopup && isAssistantPopup(packageName, className)) ||
-            (packageName in popupPackages && !oemDetector.isActivity(packageName, className))
+            isAllowedPopup(packageName, className, popupPackages)
     }
+
+    /**
+     * A popup from an app the user allowed popups from: a named window that isn't one of its
+     * activities. Without a class name, or for an app this app can't see, a screen can't be told
+     * from a popup, so it doesn't pass.
+     */
+    private fun isAllowedPopup(packageName: String, className: String?, popupPackages: Set<String>): Boolean =
+        packageName in popupPackages &&
+            className != null &&
+            oemDetector.isVisible(packageName) &&
+            !oemDetector.isActivity(packageName, className)
 
     private fun isAssistantPopup(packageName: String, className: String?): Boolean =
         OemProfiles.isAssistantPopupClass(packageName, className) ||

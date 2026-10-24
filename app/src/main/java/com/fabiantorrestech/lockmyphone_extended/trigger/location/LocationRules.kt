@@ -74,6 +74,8 @@ object LocationRules {
             }
             if (trigger.usesBeacon) add(readings.beacon(trigger))
             if (trigger.usesCharger) add(chargerPresence(trigger, readings.charger))
+            // A removed signal it needed says nothing: never "here", but leaving still counts.
+            if (trigger.requireAll && trigger.hasRemovedSignal) add(Presence.UNKNOWN)
         }
         if (results.isEmpty()) return Presence.UNKNOWN
         return results.reduce(if (trigger.requireAll) ::both else ::either)

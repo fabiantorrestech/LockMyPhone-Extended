@@ -138,12 +138,20 @@ class AppCatalog(private val context: Context) : AppIconProvider {
     fun categoryApp(category: String): String? =
         resolvedPackage(Intent(Intent.ACTION_MAIN).addCategory(category))
 
-    private fun resolvedPackage(intent: Intent): String? =
-        packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+    private fun resolvedPackage(intent: Intent): String? {
+        val default = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
             ?.activityInfo
             ?.packageName
             // "android" means several apps and no default (the chooser would be shown).
             ?.takeIf { it != "android" && it != context.packageName }
+        if (default != null) return default
+        // Many apps don't add CATEGORY_DEFAULT to these filters: then the one app that matches.
+        return packageManager.queryIntentActivities(intent, 0)
+            .map { it.activityInfo.packageName }
+            .distinct()
+            .filter { it != context.packageName }
+            .singleOrNull()
+    }
 
     /** Opens the dialer keypad. */
     fun dialIntent(): Intent =
