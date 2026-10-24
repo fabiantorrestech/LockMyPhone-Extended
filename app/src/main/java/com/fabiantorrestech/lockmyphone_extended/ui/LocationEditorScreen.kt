@@ -342,22 +342,25 @@ fun LocationEditorScreen(
                         summary = rangeSummary(draft.beaconRssiThreshold, draft.knownOneMeterDbm),
                         onClick = { editing = LocationDialog.RANGE_BEACON },
                     )
-                    SectionDivider()
-                    SettingsRow(
-                        icon = Icons.Filled.Speed,
-                        title = stringResource(R.string.beacon_timing_title),
-                        summary = beaconTimingLabel(LocalContext.current, placePreset, beaconTools.defaultPreset) +
-                            "\n" + timingSummary(LocalContext.current, placeTiming),
-                        onClick = { editing = LocationDialog.TIMING },
-                    )
-                    SectionDivider()
-                    SettingsRow(
-                        icon = Icons.Filled.GraphicEq,
-                        title = stringResource(R.string.live_row),
-                        summary = stringResource(R.string.live_row_hint),
-                        onClick = { editing = LocationDialog.BEACON_LIVE },
-                        enabled = canScan,
-                    )
+                    // Per-place timing (and Listen harder inside it) and the live meter are Pro controls.
+                    if (isPro()) {
+                        SectionDivider()
+                        SettingsRow(
+                            icon = Icons.Filled.Speed,
+                            title = stringResource(R.string.beacon_timing_title),
+                            summary = beaconTimingLabel(LocalContext.current, placePreset, beaconTools.defaultPreset) +
+                                "\n" + timingSummary(LocalContext.current, placeTiming),
+                            onClick = { editing = LocationDialog.TIMING },
+                        )
+                        SectionDivider()
+                        SettingsRow(
+                            icon = Icons.Filled.GraphicEq,
+                            title = stringResource(R.string.live_row),
+                            summary = stringResource(R.string.live_row_hint),
+                            onClick = { editing = LocationDialog.BEACON_LIVE },
+                            enabled = canScan,
+                        )
+                    }
                     val status = remember(draft.id, draft.beaconKey) { beaconTools.status(draft) }
                     if (BeaconRules.rangeTooStrict(status, draft.beaconRssiThreshold, System.currentTimeMillis())) {
                         TooStrictWarning(

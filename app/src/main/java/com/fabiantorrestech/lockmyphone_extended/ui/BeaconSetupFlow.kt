@@ -110,6 +110,7 @@ fun BeaconSetupFlow(
 ) {
     var state by remember { mutableStateOf(initial) }
     var advanced by remember { mutableStateOf(false) }
+    val pro = isPro()
     var groups by remember { mutableStateOf<List<BeaconGroup>?>(null) }
     var scanRun by remember { mutableIntStateOf(0) }
     var pickedGroup by remember { mutableStateOf<BeaconGroup?>(null) }
@@ -160,7 +161,8 @@ fun BeaconSetupFlow(
                                 )
                                 TextButton(onClick = { scanRun++ }) { Text(stringResource(R.string.setup_rescan)) }
                                 Text(stringResource(R.string.beacon_pick_hint), style = MaterialTheme.typography.bodySmall)
-                                pickedGroup?.let { group ->
+                                // Match by is a Pro control.
+                                pickedGroup?.takeIf { pro }?.let { group ->
                                     TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.setup_advanced_recognise)) }
                                     if (advanced) {
                                         MatchByOptions(group, state.key) { key, power ->
@@ -184,10 +186,13 @@ fun BeaconSetupFlow(
                         SetupStep.AREA -> {
                             AreaOption(AreaMethod.SEAT, state.method) { state = state.copy(method = it) }
                             AreaOption(AreaMethod.EDGE, state.method) { state = state.copy(method = it) }
-                            AreaOption(AreaMethod.SIZE, state.method) { state = state.copy(method = it) }
-                            TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.setup_advanced_options)) }
-                            if (advanced || state.method == AreaMethod.VALUE) {
-                                AreaOption(AreaMethod.VALUE, state.method) { state = state.copy(method = it) }
+                            // The room-size calculator and a typed value are Pro controls.
+                            if (pro) {
+                                AreaOption(AreaMethod.SIZE, state.method) { state = state.copy(method = it) }
+                                TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.setup_advanced_options)) }
+                                if (advanced || state.method == AreaMethod.VALUE) {
+                                    AreaOption(AreaMethod.VALUE, state.method) { state = state.copy(method = it) }
+                                }
                             }
                         }
                         SetupStep.MEASURE -> MeasureContent(

@@ -52,10 +52,13 @@ fun BeaconRangeDialog(
                 Text(stringResource(R.string.range_set_by), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 SettingsRow(Icons.Filled.EventSeat, stringResource(R.string.beacon_calibrate), stringResource(R.string.beacon_calibrate_hint), onClick = { onMeasure(AreaMethod.SEAT) }, enabled = canMeasure)
                 SettingsRow(Icons.Filled.Fence, stringResource(R.string.beacon_calibrate_edge), stringResource(R.string.beacon_calibrate_edge_hint), onClick = { onMeasure(AreaMethod.EDGE) }, enabled = canMeasure)
-                SettingsRow(Icons.Filled.SquareFoot, stringResource(R.string.range_title), null, onClick = onRoomSize)
-                TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.setup_advanced_options)) }
-                if (advanced) {
-                    SettingsRow(Icons.Filled.Edit, stringResource(R.string.setup_area_value), stringResource(R.string.beacon_threshold_value, thresholdDbm), onClick = onTypeValue)
+                // The room-size calculator and a typed value are Pro controls.
+                if (isPro()) {
+                    SettingsRow(Icons.Filled.SquareFoot, stringResource(R.string.range_title), null, onClick = onRoomSize)
+                    TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.setup_advanced_options)) }
+                    if (advanced) {
+                        SettingsRow(Icons.Filled.Edit, stringResource(R.string.setup_area_value), stringResource(R.string.beacon_threshold_value, thresholdDbm), onClick = onTypeValue)
+                    }
                 }
                 SettingsRow(Icons.AutoMirrored.Filled.HelpOutline, stringResource(R.string.near_info_title), null, onClick = onGuide)
             }

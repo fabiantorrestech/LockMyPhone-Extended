@@ -244,8 +244,11 @@ fun PickerAppearanceSection(appearance: PickerAppearance) {
             valueRange = PickerStyle.APP_NAME_SIZE_RANGE.first.toFloat()..PickerStyle.APP_NAME_SIZE_RANGE.last.toFloat(),
         )
 
-        TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.setup_advanced_options)) }
-        if (advanced) {
+        // The font is a Pro control.
+        if (isPro()) {
+            TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.setup_advanced_options)) }
+        }
+        if (advanced && isPro()) {
             SettingsRow(
                 icon = null,
                 title = stringResource(R.string.picker_font),
