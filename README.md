@@ -73,7 +73,6 @@ Only one lock runs at a time. When a lock tries to start during another, their k
     - a GPS circle (25–2000 m)
     - a specific Wi-Fi router (its unique BSSID, exact to a building or room)
     - a **Bluetooth beacon** (an ESP32, a coin-cell iBeacon/Eddystone, or a tablet in beacon mode; about 1–3 m, calibrated at your spot)
-    - a **paired Bluetooth device**, with no app on it: *when connected* (car, speaker, headphones, watch, keyboard; exact, no scanning) or *when nearby* (experimental; works with some watches and earbuds, and the picker shows whether yours does)
     - being **on a charger** (any, or wireless only, e.g. the pad on your desk)
   - **Combine them:** *all of them* (the strictest) or *any one of them* (the most reliable).
   - **Behaviours:** lock *while I'm here*, *on arrival*, *when I leave*, **during time slots**, or **only as a condition** for other automations:
@@ -147,7 +146,7 @@ The checklist on the **Settings** tab only shows what's still missing:
 | **Do Not Disturb access** | Only if a lock uses DND or grayscale. |
 | **Notification access** | Only if you use alarm triggers (to see alarms ringing). |
 | **Precise location + "Allow all the time"** | Only if you use location triggers (Android also requires it for Bluetooth beacons). |
-| **Nearby devices** | Only if a place uses a Bluetooth beacon or a paired device, or this device acts as a beacon. |
+| **Nearby devices** | Only if a place uses a Bluetooth beacon, or this device acts as a beacon. |
 | **Calendar** (read-only) | Only if you use calendar triggers. |
 | **NFC turned on** (a switch, not a permission) | Only if you use NFC tags. |
 
@@ -297,11 +296,10 @@ Not exactly. Phones measure signal strength, which changes with walls, bodies an
 
 **Does the other device need this app?**
 - **Beacons** (ESP32, coin-cell iBeacon/Eddystone): no.
-- **Paired devices** (car, speaker, headphones, watch, keyboard): no. Use the *Paired Bluetooth device* signal, set to *when connected*.
 - **Another phone or tablet as a beacon:** yes, with *Act as a beacon* on. Phones change their Bluetooth address every few minutes for privacy, so without a fixed broadcast they can't be recognised.
 
 **What if I don't want to allow location?**
-GPS, Wi-Fi and beacon places need it (Android counts Bluetooth scanning as location). Charger places and paired devices *when connected* don't. Revoke it in Settings → Permissions; the places that need it show "Paused".
+GPS, Wi-Fi and beacon places need it (Android counts Bluetooth scanning as location). Charger places don't. Revoke it in Settings → Permissions; the places that need it show "Paused".
 
 **Does location use a lot of battery?**
 - **Play Services (default):** battery-friendly geofences. Small circles are double-checked about every 2 minutes, only while you're near the place.
@@ -364,7 +362,7 @@ Requirements: Android Studio (2026.1 or newer; uses its bundled JDK), Android SD
 | Alarm triggers (Google Clock) | ✅ Tested (emulator) |
 | Resume after screen-off, Lock defaults, DND levels, grayscale, presets, editor redesign, icons, reordering, first-alarm + day rules, timer exclusion, missing-alarm warnings, location triggers + time slots, calendar triggers, backup/restore + auto backup, release build | 🟡 Built, not yet tested on a device |
 | Beacon + charger places, "Only while at", act as a beacon | 🟡 Built, not yet tested on a device |
-| Paired Bluetooth devices (connected / nearby), Permissions page with revoke | 🟡 Built, not yet tested on a device |
+| Permissions page with revoke | 🟡 Built, not yet tested on a device |
 | NFC tags (start / end / both, early-unlock wait, write to tag) + the gate after unlocking | 🟡 Built, not yet tested on a device |
 | Emergency mode | ⬜ Not built yet |
 | Google and Google-free editions, Pixel Watch complication | ⬜ Planned: [doc/plans/m15-editions-and-watch.md](doc/plans/m15-editions-and-watch.md) |

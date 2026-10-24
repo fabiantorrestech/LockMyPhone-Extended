@@ -42,7 +42,6 @@
     <string name="live_too_strict">The signal here (about %1$d) is weaker than the range (%2$d): you wouldn\'t count as here. Measure the range again.</string>
     <string name="beacon_row">Beacon</string>
     <string name="beacon_not_set_up">Not set up: tap to set it up</string>
-    <string name="device_row">Device</string>
 
     <!-- Device admin -->
     <string name="admin_label">LockMyPhone-Extended lock enforcement</string>
@@ -473,7 +472,6 @@
     <string name="calendar_defaults_hint">New calendar triggers start with these; each one can change them.</string>
     <string name="setup_calendar">Calendar access</string>
     <string name="setup_nearby_devices">Nearby devices (Bluetooth beacons)</string>
-    <string name="setup_paired_devices">Nearby devices (paired Bluetooth devices)</string>
     <string name="permissions_title">Permissions</string>
     <string name="permissions_card_hint">See every permission, what uses it, and allow, change or revoke it.</string>
     <string name="permissions_open">Open permissions</string>
@@ -513,9 +511,7 @@
     <string name="perm_location_services">Location services</string>
     <string name="perm_location_services_why">Android\'s location switch; places can\'t be detected while it\'s off.</string>
     <string name="perm_nearby_scan">Nearby devices: find beacons</string>
-    <string name="perm_nearby_scan_why">Hears Bluetooth beacons, and paired devices set to \"When nearby\".</string>
-    <string name="perm_nearby_connect">Nearby devices: paired devices</string>
-    <string name="perm_nearby_connect_why">Lists your paired devices and hears when they connect or disconnect.</string>
+    <string name="perm_nearby_scan_why">Hears Bluetooth beacons.</string>
     <string name="perm_nearby_advertise">Nearby devices: act as a beacon</string>
     <string name="perm_nearby_advertise_why">Lets this device broadcast a beacon for another phone.</string>
     <string name="perm_calendar">Calendar</string>
@@ -524,33 +520,6 @@
     <string name="perm_notification_access_why">Sees alarms ringing and being dismissed, for alarm triggers.</string>
     <string name="perm_dnd">Do Not Disturb access</string>
     <string name="perm_dnd_why">Turns on Do Not Disturb and grayscale during locks that ask for them.</string>
-    <string name="section_bt_device">Bluetooth device</string>
-    <string name="signal_bt_device">Paired Bluetooth device</string>
-    <string name="signal_bt_device_desc">Connected to, or near, a device you\'ve paired: car, speaker, headphones, watch, keyboard.</string>
-    <string name="bt_device_needs_permission">Paired devices need the \"Nearby devices\" permission.</string>
-    <string name="bt_device_pick">Pick a paired device</string>
-    <string name="bt_device_none">None yet: tap to choose</string>
-    <string name="bt_device_none_paired">No paired devices. Pair it in Android\'s Bluetooth settings first.</string>
-    <string name="bt_device_checking_nearby">Listening for 15 seconds to see which ones are nearby…</string>
-    <string name="bt_device_heard">heard nearby, %1$d dBm</string>
-    <string name="bt_device_not_heard">not heard nearby</string>
-    <string name="bt_device_pick_hint">Only devices paired in Android\'s Bluetooth settings are listed.</string>
-    <string name="bt_device_pick_nearby_hint">\"Not heard nearby\" means this phone can\'t recognise it without a connection: use \"When connected\" for it instead.</string>
-    <string name="bt_detect_connected">When connected (recommended)</string>
-    <string name="bt_detect_connected_desc">Here while the phone is connected to it. Exact, no scanning, almost no battery.</string>
-    <string name="bt_detect_nearby">When nearby (experimental)</string>
-    <string name="bt_detect_nearby_desc">Here while it\'s heard nearby, even without a connection. Works with some watches and earbuds; the picker shows whether yours does.</string>
-    <string name="bt_nearby_needs_scan">Hearing a device nearby needs the \"Nearby devices\" scan permission and precise location.</string>
-    <string name="bt_connected_hint">Connecting counts as arriving, disconnecting as leaving. After a reboot, it counts once it connects again.</string>
-    <string name="bt_nearby_hint">Like a beacon: here after about %1$s near it, gone after about %2$s without it (Responsiveness).</string>
-    <string name="bt_kind_audio">Audio</string>
-    <string name="bt_kind_watch">Watch</string>
-    <string name="bt_kind_computer">Computer</string>
-    <string name="bt_kind_phone">Phone or tablet</string>
-    <string name="bt_kind_input">Keyboard or mouse</string>
-    <string name="bt_kind_other">Bluetooth device</string>
-    <string name="location_summary_bt_connected">connected to %1$s</string>
-    <string name="location_summary_bt_near">near %1$s</string>
     <string name="beacon_mode_battery">Battery: allow unrestricted</string>
     <string name="beacon_mode_battery_desc">So the beacon keeps broadcasting in the background. Needed on Samsung, Nothing and many others.</string>
     <string name="section_signals">How it knows you\'re here</string>
@@ -1119,8 +1088,6 @@
     <string name="test_beacon_heard">heard at %1$d dBm (near is %2$d or stronger)</string>
     <string name="test_beacon_not_heard">not heard (near is %1$d dBm or stronger)</string>
     <string name="test_scan_unavailable">can\'t scan (Bluetooth off or not allowed)</string>
-    <string name="test_bt_connected">connected</string>
-    <string name="test_bt_not_connected">not connected</string>
     <string name="test_charger_wired">charging (wired)</string>
     <string name="test_charger_wireless">charging (wireless)</string>
     <string name="test_charger_none">not charging</string>

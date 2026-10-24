@@ -87,7 +87,6 @@ class LocationTriggerManager(
     val playServices = PlayServicesEngine(context)
     val beaconScanner = BeaconScanner(context)
     private val beaconTracker = BeaconTracker(context) { place -> place.beaconTiming(defaultBeaconTiming()) }
-    private val btConnections = BtConnectionTracker(context)
 
     /** Called when you arrive at any place, so "Only while at…" schedules and calendar triggers can start. */
     var onPlaceEntered: (suspend () -> Unit)? = null
@@ -159,8 +158,6 @@ class LocationTriggerManager(
 
     private suspend fun watchBeaconsAndCharger(triggers: List<LocationTrigger>) {
         updateScanPlan(triggers)
-        // Connections are reported by BtConnectionReceiver; catch up on ones made before it was watching.
-        btConnections.refreshFromProfiles(triggers.filter { it.usesBtConnected }.mapNotNull { it.btAddress }.toSet())
         // A Wi-Fi zone also counts networks in range: re-check when the system's scan results change.
         val wifiZones = triggers.any { it.hasWifiZone() }
         if (wifiZones && !scanResultsReceiverRegistered) {
@@ -260,7 +257,6 @@ class LocationTriggerManager(
         val nowMs = System.currentTimeMillis()
         // A signal whose permission was revoked says nothing (unknown), so it never counts as leaving.
         val canScan = beaconScanner.hasPermission() && locationServicesOn()
-        val canSeeConnections = PairedDevices.hasPermission(context)
         val wifiKnown = hasPreciseLocation() && locationServicesOn()
         val connected = if (wifiKnown) connectedWifi() else null
         connected?.let(wifiHistory::record)
@@ -270,8 +266,6 @@ class LocationTriggerManager(
             wifiKnown = wifiKnown,
             charger = if (triggers.any { it.usesCharger }) ChargerSignal.read(context) else null,
             beacon = { place -> if (canScan) beaconTracker.presence(place, nowMs) else Presence.UNKNOWN },
-            btConnected = { address -> if (canSeeConnections) btConnections.presence(address) else Presence.UNKNOWN },
-            btNearby = { place -> if (canScan) beaconTracker.devicePresence(place, nowMs) else Presence.UNKNOWN },
         )
         val now = ZonedDateTime.now()
         val day = AlarmDayRules.logicalDay(now.toInstant().toEpochMilli(), dayStartMinutes(), now.zone)
@@ -391,7 +385,6 @@ class LocationTriggerManager(
         if (scanKeys(place).isNotEmpty() && beaconScanner.hasPermission() && beaconScanner.isBluetoothOn()) {
             beaconTracker.applySnapshot(place, beaconScanner.readingsByKey(REFRESH_SCAN_MS), nowMs)
         }
-        place.btAddress?.takeIf { place.usesBtConnected }?.let { btConnections.refreshFromProfiles(setOf(it)) }
         val fix = if (place.usesGps) currentFix() else null
         evaluate(fix, fire = true, freshFix = false)
         scheduleRecheckIfNear()
@@ -414,8 +407,6 @@ class LocationTriggerManager(
         } else {
             null
         }
-        val canSeeConnections = PairedDevices.hasPermission(context)
-        draft.btAddress?.takeIf { draft.usesBtConnected && canSeeConnections }?.let { btConnections.refreshFromProfiles(setOf(it)) }
         val wifiKnown = hasPreciseLocation() && locationServicesOn()
         fun scanned(key: String?, threshold: Int): Presence = when {
             heard == null || key == null -> Presence.UNKNOWN
@@ -428,14 +419,12 @@ class LocationTriggerManager(
             wifiKnown = wifiKnown,
             charger = if (draft.usesCharger) ChargerSignal.read(context) else null,
             beacon = { place -> scanned(place.beaconKey, place.beaconRssiThreshold) },
-            btConnected = { address -> if (canSeeConnections) btConnections.presence(address) else Presence.UNKNOWN },
-            btNearby = { place -> scanned(nearbyDeviceKey(place), place.btRssiThreshold) },
         )
         return PlaceTestReading(readings, heard)
     }
 
-    /** What the background check knows about [place]'s beacon (or nearby device): for the editor's warning. */
-    fun beaconStatus(place: LocationTrigger, device: Boolean): BeaconStatus? = beaconTracker.status(place, device)
+    /** What the background check knows about [place]'s beacon: for the editor's warning. */
+    fun beaconStatus(place: LocationTrigger): BeaconStatus? = beaconTracker.status(place)
 
     /** Whether you're at the place [placeId] as last worked out (for "Only while at…" conditions). */
     fun isAt(placeId: Long): Boolean = stateStore.presence(placeId) == Presence.INSIDE

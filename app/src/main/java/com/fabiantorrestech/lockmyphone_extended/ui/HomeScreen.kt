@@ -1059,9 +1059,6 @@ data class SetupStatus(
     /** True if any place uses a beacon, so the "Nearby devices" row matters. */
     val beaconPlacesExist: Boolean = false,
     val bluetoothScanGranted: Boolean = false,
-    /** True if any place uses a paired Bluetooth device, so the "connect" row matters. */
-    val btDevicePlacesExist: Boolean = false,
-    val bluetoothConnectGranted: Boolean = false,
     /** The "Nearby devices" scan permission alone (without location), for Settings → Permissions. */
     val nearbyScanGranted: Boolean = false,
     val bluetoothAdvertiseGranted: Boolean = false,
@@ -1085,7 +1082,6 @@ class SetupActions(
     val onEnableLocationServices: () -> Unit,
     val onGrantCalendar: () -> Unit,
     val onGrantBluetoothScan: () -> Unit,
-    val onGrantBluetoothConnect: () -> Unit,
     val onTurnOnNfc: () -> Unit,
 )
 
@@ -1109,9 +1105,6 @@ fun SetupChecklist(setup: SetupStatus, actions: SetupActions) {
             }
             if (setup.nfcTagsExist && setup.hasNfc) {
                 SetupRow(stringResource(R.string.setup_nfc), setup.nfcOn, actions.onTurnOnNfc)
-            }
-            if (setup.btDevicePlacesExist) {
-                SetupRow(stringResource(R.string.setup_paired_devices), setup.bluetoothConnectGranted, actions.onGrantBluetoothConnect)
             }
             if (setup.calendarTriggersExist) {
                 SetupRow(stringResource(R.string.setup_calendar), setup.calendarGranted, actions.onGrantCalendar)

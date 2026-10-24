@@ -28,35 +28,23 @@ class BeaconTracker(
     private val prefs = context.createDeviceProtectedStorageContext()
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /**
-     * Folds the latest sightings (strongest per key) into every place's tracks: its beacon, and
-     * its paired device when that's detected by being nearby.
-     */
+    /** Folds the latest sightings (strongest per key) into every beacon place's track. */
     fun onSightings(places: List<LocationTrigger>, sightings: List<BeaconSighting>, nowMs: Long) {
         // Every reading in the batch counts towards the trimmed mean, not just the strongest.
         val readings = sightings.groupBy { it.key }.mapValues { (_, list) -> list.map { it.rssi } }
-        places.forEach { place ->
-            if (place.usesBeacon) {
-                val key = beaconTrackKey(place.id)
-                save(key, BeaconRules.update(load(key), readings[place.beaconKey].orEmpty(), nowMs, place.beaconRssiThreshold, timingOf(place)))
-            }
-            nearbyDeviceKey(place)?.let { deviceKey ->
-                val key = deviceTrackKey(place.id)
-                save(key, BeaconRules.update(load(key), readings[deviceKey].orEmpty(), nowMs, place.btRssiThreshold, timingOf(place)))
-            }
+        places.filter { it.usesBeacon }.forEach { place ->
+            val key = beaconTrackKey(place.id)
+            save(key, BeaconRules.update(load(key), readings[place.beaconKey].orEmpty(), nowMs, place.beaconRssiThreshold, timingOf(place)))
         }
     }
 
     /**
-     * A Refresh: [readings] (key → its readings) from one short scan decide [place]'s beacon and
-     * nearby-device tracks right away ([BeaconRules.snapshot]).
+     * A Refresh: [readings] (key → its readings) from one short scan decide [place]'s beacon track
+     * right away ([BeaconRules.snapshot]).
      */
     fun applySnapshot(place: LocationTrigger, readings: Map<String, List<Int>>, nowMs: Long) {
         if (place.usesBeacon) {
             save(beaconTrackKey(place.id), BeaconRules.snapshot(readings[place.beaconKey].orEmpty(), nowMs, place.beaconRssiThreshold, timingOf(place)))
-        }
-        nearbyDeviceKey(place)?.let { deviceKey ->
-            save(deviceTrackKey(place.id), BeaconRules.snapshot(readings[deviceKey].orEmpty(), nowMs, place.btRssiThreshold, timingOf(place)))
         }
     }
 
@@ -64,47 +52,30 @@ class BeaconTracker(
     fun presence(place: LocationTrigger, nowMs: Long): Presence =
         current(beaconTrackKey(place.id), nowMs, place.beaconRssiThreshold, timingOf(place))
 
-    /** The same for a paired device detected by being nearby. */
-    fun devicePresence(place: LocationTrigger, nowMs: Long): Presence =
-        current(deviceTrackKey(place.id), nowMs, place.btRssiThreshold, timingOf(place))
-
-    /** The latest state of [place]'s beacon (or, with [device], its nearby paired device); null if never heard. */
-    fun status(place: LocationTrigger, device: Boolean): BeaconStatus? {
-        val track = load(if (device) deviceTrackKey(place.id) else beaconTrackKey(place.id))
+    /** The latest state of [place]'s beacon; null if never heard. */
+    fun status(place: LocationTrigger): BeaconStatus? {
+        val track = load(beaconTrackKey(place.id))
         if (track.lastSeenMs == 0L) return null
         return BeaconStatus(track.lastSeenMs, track.smoothedRssi, track.near)
     }
 
-    /** [place]'s beacon (or nearby device) is near, or was heard lately: it should be listened to harder. */
+    /** [place]'s beacon is near, or was heard lately: it should be listened to harder. */
     fun heardRecently(place: LocationTrigger, nowMs: Long): Boolean {
+        if (!place.usesBeacon) return false
         val leaveMs = timingOf(place).leaveMs
-        return listOfNotNull(
-            beaconTrackKey(place.id).takeIf { place.usesBeacon },
-            deviceTrackKey(place.id).takeIf { place.usesBtNearby },
-        ).any { key ->
-            val track = load(key)
-            track.near || (track.lastSeenMs > 0 && nowMs - track.lastSeenMs < leaveMs * 2)
-        }
+        val track = load(beaconTrackKey(place.id))
+        return track.near || (track.lastSeenMs > 0 && nowMs - track.lastSeenMs < leaveMs * 2)
     }
 
     /**
      * How soon "away" must be re-checked: the shortest re-check interval among places whose beacon
      * is near or was heard lately, or null when none needs it.
      */
-    fun recheckInterval(places: List<LocationTrigger>, nowMs: Long): Long? = places.filter { place ->
-        val leaveMs = timingOf(place).leaveMs
-        listOfNotNull(
-            beaconTrackKey(place.id).takeIf { place.usesBeacon },
-            deviceTrackKey(place.id).takeIf { place.usesBtNearby },
-        ).any { key ->
-            val track = load(key)
-            track.near || (track.lastSeenMs > 0 && nowMs - track.lastSeenMs < leaveMs * 2)
-        }
-    }.minOfOrNull { timingOf(it).recheckMs }
+    fun recheckInterval(places: List<LocationTrigger>, nowMs: Long): Long? =
+        places.filter { heardRecently(it, nowMs) }.minOfOrNull { timingOf(it).recheckMs }
 
     fun forget(placeId: Long) = prefs.edit {
         remove(beaconTrackKey(placeId))
-        remove(deviceTrackKey(placeId))
     }
 
     private fun current(key: String, nowMs: Long, threshold: Int, timing: BeaconTiming): Presence {
@@ -148,8 +119,6 @@ class BeaconTracker(
 
     private fun beaconTrackKey(placeId: Long) = "track_$placeId"
 
-    private fun deviceTrackKey(placeId: Long) = "track_${placeId}_device"
-
     private companion object {
         const val PREFS_NAME = "beacon_tracks"
     }
@@ -192,13 +161,9 @@ val LocationTrigger.knownOneMeterDbm: Int?
 fun LocationTrigger.beaconTiming(default: BeaconTiming): BeaconTiming =
     BeaconTiming.resolve(beaconPreset, beaconArriveSec, beaconLeaveSec, beaconRecheckSec, beaconScanSpeed, default)
 
-/** The scan key of a place's paired device, when it's detected by being nearby. */
-fun nearbyDeviceKey(place: LocationTrigger): String? =
-    place.btAddress?.takeIf { place.usesBtNearby }?.let(BeaconRules::deviceKey)
-
 /** Everything a place needs the background scan to listen for. */
 fun scanKeys(place: LocationTrigger): List<String> =
-    listOfNotNull(place.beaconKey?.takeIf { place.usesBeacon }, nearbyDeviceKey(place))
+    listOfNotNull(place.beaconKey?.takeIf { place.usesBeacon })
 
 /** The charger signal: read from the battery status; woken by a "starts charging" job. */
 object ChargerSignal {

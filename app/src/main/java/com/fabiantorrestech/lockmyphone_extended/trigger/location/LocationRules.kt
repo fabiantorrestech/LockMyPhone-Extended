@@ -1,6 +1,5 @@
 package com.fabiantorrestech.lockmyphone_extended.trigger.location
 
-import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
 import com.fabiantorrestech.lockmyphone_extended.data.db.ChargerMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import kotlin.math.asin
@@ -26,8 +25,6 @@ data class ChargerReading(val pluggedIn: Boolean, val wireless: Boolean)
  * @param wifiKnown false when the Wi-Fi network can't be read (no location permission, or
  *   location services off): then Wi-Fi says nothing, rather than "not connected".
  * @param beacon whether a beacon place's beacon is near right now.
- * @param btConnected whether the paired device with this address is connected.
- * @param btNearby whether a place's paired device is heard nearby.
  */
 data class Readings(
     val fix: Fix?,
@@ -35,8 +32,6 @@ data class Readings(
     val wifiKnown: Boolean = true,
     val charger: ChargerReading?,
     val beacon: (LocationTrigger) -> Presence,
-    val btConnected: (String) -> Presence = { Presence.UNKNOWN },
-    val btNearby: (LocationTrigger) -> Presence = { Presence.UNKNOWN },
 )
 
 /** A location fix: where, and how sure (the radius of 68% confidence, in meters). */
@@ -78,9 +73,6 @@ object LocationRules {
                 )
             }
             if (trigger.usesBeacon) add(readings.beacon(trigger))
-            trigger.btAddress?.takeIf { trigger.usesBtDevice }?.let { address ->
-                add(if (trigger.btDetection == BtDetection.CONNECTED) readings.btConnected(address) else readings.btNearby(trigger))
-            }
             if (trigger.usesCharger) add(chargerPresence(trigger, readings.charger))
         }
         if (results.isEmpty()) return Presence.UNKNOWN

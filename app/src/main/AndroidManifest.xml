@@ -33,8 +33,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
-    <!-- Paired devices as places: list them, and hear when they connect or disconnect. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- "Act as a beacon" runs as a connected-device foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <!-- NFC tags that start or end locks. Optional: the app still installs on phones without NFC. -->
     <uses-permission android:name="android.permission.NFC" />
@@ -190,16 +189,6 @@
         <receiver
             android:name=".core.service.BeaconModeReceiver"
             android:exported="false" />
-
-        <receiver
-            android:name=".trigger.location.BtConnectionReceiver"
-            android:directBootAware="true"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
-                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
-            </intent-filter>
-        </receiver>
 
         <receiver
             android:name=".data.backup.AutoBackupReceiver"

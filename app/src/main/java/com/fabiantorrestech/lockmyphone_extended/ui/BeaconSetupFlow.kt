@@ -34,15 +34,11 @@ import com.fabiantorrestech.lockmyphone_extended.R
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconGroup
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconRules
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconSighting
-import com.fabiantorrestech.lockmyphone_extended.trigger.location.PairedDevices
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.RangeRules
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-
-/** What is being set up: a beacon, or a paired device detected by being nearby. */
-enum class SetupKind { BEACON, DEVICE }
 
 /** The guided setup's five steps, in order. */
 enum class SetupStep { PICK, NAME, AREA, MEASURE, CHECK }
@@ -107,10 +103,8 @@ private const val CHECK_MS = 10_000L
  */
 @Composable
 fun BeaconSetupFlow(
-    kind: SetupKind,
     initial: BeaconSetupState,
     beaconTools: BeaconTools,
-    pairedDeviceTools: PairedDeviceTools,
     onDone: (BeaconSetupResult) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -119,18 +113,12 @@ fun BeaconSetupFlow(
     var groups by remember { mutableStateOf<List<BeaconGroup>?>(null) }
     var scanRun by remember { mutableIntStateOf(0) }
     var pickedGroup by remember { mutableStateOf<BeaconGroup?>(null) }
-    val devices = remember { if (kind == SetupKind.DEVICE) pairedDeviceTools.list() else emptyList() }
-    var seen by remember { mutableStateOf<Map<String, Int>?>(null) }
     var sizeOpen by remember { mutableStateOf(false) }
     var valueOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(scanRun) {
-        if (kind == SetupKind.BEACON) {
-            groups = null
-            groups = beaconTools.discover()
-        } else {
-            seen = pairedDeviceTools.seenNearby?.invoke()
-        }
+        groups = null
+        groups = beaconTools.discover()
     }
 
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -147,7 +135,7 @@ fun BeaconSetupFlow(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     when (state.step) {
-                        SetupStep.PICK -> if (kind == SetupKind.BEACON) {
+                        SetupStep.PICK -> {
                             val list = groups
                             if (list == null) {
                                 CircularProgressIndicator()
@@ -181,22 +169,6 @@ fun BeaconSetupFlow(
                                     }
                                 }
                             }
-                        } else {
-                            PairedDeviceList(
-                                devices = devices,
-                                seen = seen,
-                                scanning = pairedDeviceTools.seenNearby != null && seen == null,
-                                selectedAddress = state.address,
-                                onPick = { device ->
-                                    val key = BeaconRules.deviceKey(device.address)
-                                    state = state.copy(
-                                        key = key,
-                                        address = device.address,
-                                        label = device.name,
-                                        name = beaconTools.nameOf(key, PairedDevices.normalize(device.address)) ?: state.name,
-                                    )
-                                },
-                            )
                         }
                         SetupStep.NAME -> {
                             OutlinedTextField(
@@ -258,7 +230,7 @@ fun BeaconSetupFlow(
         val key = state.key.orEmpty()
         RangeCalculatorDialog(
             savedOneMeter = state.oneMeterDbm,
-            readAdvertised = { if (kind == SetupKind.BEACON && beaconTools.hasPermission && beaconTools.bluetoothOn) beaconTools.advertisedPower(key) else null },
+            readAdvertised = { if (beaconTools.hasPermission && beaconTools.bluetoothOn) beaconTools.advertisedPower(key) else null },
             measureOneMeter = { beaconTools.sample(key) },
             onUse = { value, oneMeter ->
                 state = state.copy(thresholdDbm = -value, oneMeterDbm = oneMeter ?: state.oneMeterDbm, step = SetupStep.CHECK)

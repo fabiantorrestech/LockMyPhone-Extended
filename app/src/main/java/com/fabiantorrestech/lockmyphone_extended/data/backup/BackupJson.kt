@@ -17,7 +17,6 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarLengthMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.WakeTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.BeaconName
-import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
 import com.fabiantorrestech.lockmyphone_extended.data.db.ChargerMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMatch
 import com.fabiantorrestech.lockmyphone_extended.data.db.PlaceSignal
@@ -319,8 +318,6 @@ object BackupJson {
         put("signals", strings(l.signals)); put("requireAll", l.requireAll)
         put("beaconKey", l.beaconKey ?: JSONObject.NULL); put("beaconName", l.beaconName ?: JSONObject.NULL)
         put("beaconRssiThreshold", l.beaconRssiThreshold); put("chargerMode", l.chargerMode.name)
-        put("btAddress", l.btAddress ?: JSONObject.NULL); put("btName", l.btName ?: JSONObject.NULL)
-        put("btDetection", l.btDetection.name); put("btRssiThreshold", l.btRssiThreshold)
         put("beaconAddress", l.beaconAddress ?: JSONObject.NULL); put("beaconOneMeterDbm", l.beaconOneMeterDbm ?: JSONObject.NULL)
         put("beaconPreset", l.beaconPreset ?: JSONObject.NULL); put("beaconArriveSec", l.beaconArriveSec ?: JSONObject.NULL)
         put("beaconLeaveSec", l.beaconLeaveSec ?: JSONObject.NULL); put("beaconRecheckSec", l.beaconRecheckSec ?: JSONObject.NULL)
@@ -345,9 +342,6 @@ object BackupJson {
         beaconKey = o.optStringOrNull("beaconKey"), beaconName = o.optStringOrNull("beaconName"),
         beaconRssiThreshold = o.optInt("beaconRssiThreshold", LocationTrigger.DEFAULT_BEACON_THRESHOLD),
         chargerMode = enumOr(o.optString("chargerMode"), ChargerMode.ANY),
-        btAddress = o.optStringOrNull("btAddress"), btName = o.optStringOrNull("btName"),
-        btDetection = enumOr(o.optString("btDetection"), BtDetection.CONNECTED),
-        btRssiThreshold = o.optInt("btRssiThreshold", LocationTrigger.DEFAULT_BEACON_THRESHOLD),
         beaconAddress = o.optStringOrNull("beaconAddress"), beaconOneMeterDbm = o.optIntOrNull("beaconOneMeterDbm"),
         beaconPreset = o.optStringOrNull("beaconPreset"), beaconArriveSec = o.optIntOrNull("beaconArriveSec"),
         beaconLeaveSec = o.optIntOrNull("beaconLeaveSec"), beaconRecheckSec = o.optIntOrNull("beaconRecheckSec"),

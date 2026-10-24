@@ -5,12 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.Smartphone
-import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,8 +19,6 @@ import com.fabiantorrestech.lockmyphone_extended.R
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconGroup
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconRules
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconType
-import com.fabiantorrestech.lockmyphone_extended.trigger.location.PairedDevice
-import com.fabiantorrestech.lockmyphone_extended.trigger.location.PairedDeviceKind
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.RangeRules
 
 /**
@@ -101,54 +94,6 @@ fun MatchByOptions(group: BeaconGroup, selected: String?, onSelect: (key: String
             Text(stringResource(R.string.match_by_nothing), color = MaterialTheme.colorScheme.error)
         }
     }
-}
-
-/** The phone's paired devices; with [seen] (a nearby scan), which ones it can hear right now. */
-@Composable
-fun PairedDeviceList(
-    devices: List<PairedDevice>,
-    seen: Map<String, Int>?,
-    scanning: Boolean,
-    selectedAddress: String?,
-    onPick: (PairedDevice) -> Unit,
-) {
-    if (devices.isEmpty()) Text(stringResource(R.string.bt_device_none_paired))
-    if (scanning) {
-        CircularProgressIndicator()
-        Text(stringResource(R.string.bt_device_checking_nearby))
-    }
-    devices.forEach { device ->
-        val heard = seen?.get(device.address)
-        val nearbyNote = when {
-            seen == null -> null
-            heard != null -> stringResource(R.string.bt_device_heard, heard)
-            else -> stringResource(R.string.bt_device_not_heard)
-        }
-        SettingsRow(
-            icon = if (device.address == selectedAddress) Icons.Filled.CheckCircle else pairedDeviceIcon(device.kind),
-            title = device.name,
-            summary = listOfNotNull(stringResource(pairedDeviceKindLabel(device.kind)), nearbyNote).joinToString(" · "),
-            onClick = { onPick(device) },
-        )
-    }
-}
-
-fun pairedDeviceIcon(kind: PairedDeviceKind): ImageVector = when (kind) {
-    PairedDeviceKind.AUDIO -> Icons.Filled.Headphones
-    PairedDeviceKind.WATCH -> Icons.Filled.Watch
-    PairedDeviceKind.COMPUTER -> Icons.Filled.Computer
-    PairedDeviceKind.PHONE -> Icons.Filled.Smartphone
-    PairedDeviceKind.INPUT -> Icons.Filled.Keyboard
-    PairedDeviceKind.OTHER -> Icons.Filled.Bluetooth
-}
-
-fun pairedDeviceKindLabel(kind: PairedDeviceKind): Int = when (kind) {
-    PairedDeviceKind.AUDIO -> R.string.bt_kind_audio
-    PairedDeviceKind.WATCH -> R.string.bt_kind_watch
-    PairedDeviceKind.COMPUTER -> R.string.bt_kind_computer
-    PairedDeviceKind.PHONE -> R.string.bt_kind_phone
-    PairedDeviceKind.INPUT -> R.string.bt_kind_input
-    PairedDeviceKind.OTHER -> R.string.bt_kind_other
 }
 
 fun beaconTypeLabel(type: BeaconType): Int = when (type) {

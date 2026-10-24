@@ -37,9 +37,6 @@ enum class PlaceSignal {
     /** Near the place's Bluetooth beacon (desk beacon, ESP32, a tablet in beacon mode…). */
     BEACON,
 
-    /** A paired Bluetooth device: connected to it, or (experimental) near it. Added in DB version 14. */
-    BT_DEVICE,
-
     /** Plugged into a charger. */
     CHARGER,
 }
@@ -47,14 +44,11 @@ enum class PlaceSignal {
 /** Which chargers count for the [PlaceSignal.CHARGER] signal. */
 enum class ChargerMode { ANY, WIRELESS }
 
-/** How the [PlaceSignal.BT_DEVICE] signal knows the device is there. */
-enum class BtDetection {
-    /** Connected to it (car, speaker, headphones, watch): exact, no scanning. */
-    CONNECTED,
-
-    /** Heard nearby without a connection. Experimental: only works if Android recognises the device's changing address. */
-    NEARBY,
-}
+/**
+ * Legacy (DB versions 14–26): how a paired Bluetooth device was detected. The paired-device signal
+ * was removed on 2026-10-24; kept only because the `btDetection` column still exists.
+ */
+enum class BtDetection { CONNECTED, NEARBY }
 
 /** How a saved Wi-Fi network is recognised. */
 enum class WifiMatch {
@@ -154,8 +148,8 @@ enum class LocationMatch {
  *   and, for the Wi-Fi zone, [beaconBoostWifiBssid]. The GPS zone uses [latitude] /
  *   [longitude] / [radiusMeters]. Added in DB version 22.
  * @param chargerMode which chargers count for [PlaceSignal.CHARGER].
- * @param btAddress the paired device for [PlaceSignal.BT_DEVICE]; [btName] is for display only.
- * @param btDetection connected to it, or near it; [btRssiThreshold] is "near" for the latter.
+ * @param btAddress legacy (DB versions 14–26, paired-device signal, removed): unused, with [btName],
+ *   [btDetection] and [btRssiThreshold]. Kept because the columns still exist.
  * @param lockOnReturn time slots: lock when you arrive or come back during a slot.
  * @param stayLockedAfterLeaving time slots: leaving keeps the lock until the slot ends, instead
  *   of unlocking.
@@ -228,12 +222,6 @@ data class LocationTrigger(
     val usesBeacon: Boolean get() = uses(PlaceSignal.BEACON) && beaconKey != null
 
     val usesCharger: Boolean get() = uses(PlaceSignal.CHARGER)
-
-    val usesBtDevice: Boolean get() = uses(PlaceSignal.BT_DEVICE) && btAddress != null
-
-    val usesBtConnected: Boolean get() = usesBtDevice && btDetection == BtDetection.CONNECTED
-
-    val usesBtNearby: Boolean get() = usesBtDevice && btDetection == BtDetection.NEARBY
 
     companion object {
         const val DEFAULT_RADIUS_METERS = 100

@@ -110,7 +110,7 @@ class BeaconScanner(private val context: Context) {
     suspend fun discoverGrouped(durationMs: Long): List<BeaconGroup> {
         val builders = mutableMapOf<String, GroupBuilder>()
         scanFor(durationMs) { result ->
-            val address = PairedDevices.normalize(result.device.address)
+            val address = BeaconRules.normalizeAddress(result.device.address)
             val builder = builders.getOrPut(address) { GroupBuilder(address, addressIsRandom(result)) }
             builder.name = builder.name ?: result.scanRecord?.deviceName?.takeIf { it.isNotBlank() }
             builder.strongest = maxOf(builder.strongest, result.rssi)
@@ -162,19 +162,9 @@ class BeaconScanner(private val context: Context) {
         return power
     }
 
-    /** The addresses heard during [durationMs], with their strongest signal (paired-device picker). */
-    suspend fun seenAddresses(durationMs: Long): Map<String, Int> {
-        val seen = mutableMapOf<String, Int>()
-        scanFor(durationMs) { result ->
-            val address = PairedDevices.normalize(result.device.address)
-            seen[address] = maxOf(seen[address] ?: Int.MIN_VALUE, result.rssi)
-        }
-        return seen
-    }
-
     /**
      * Everything one background result can match: the beacon it carries, if any, and the device
-     * itself by address (for paired devices detected by being nearby, which often have no name).
+     * itself by address (a whole beacon picked with all its formats, ADR 0006).
      */
     fun sightingsOf(result: ScanResult): List<BeaconSighting> {
         val beacon = parse(result)
@@ -183,7 +173,7 @@ class BeaconScanner(private val context: Context) {
             BeaconType.DEVICE,
             result.scanRecord?.deviceName ?: result.device.address,
             result.rssi,
-            address = PairedDevices.normalize(result.device.address),
+            address = BeaconRules.normalizeAddress(result.device.address),
         )
         return if (beacon == null || beacon.key == device.key) listOf(device) else listOf(beacon, device)
     }
@@ -210,7 +200,7 @@ class BeaconScanner(private val context: Context) {
     fun parse(result: ScanResult): BeaconSighting? {
         val record = result.scanRecord
         val name = record?.deviceName
-        val address = PairedDevices.normalize(result.device.address)
+        val address = BeaconRules.normalizeAddress(result.device.address)
         record?.getManufacturerSpecificData(BeaconRules.APPLE_COMPANY_ID)?.let { data ->
             BeaconRules.iBeaconKey(data)?.let {
                 return BeaconSighting(it, BeaconType.IBEACON, name ?: "iBeacon", result.rssi, BeaconRules.iBeaconMeasuredPower(data), address)

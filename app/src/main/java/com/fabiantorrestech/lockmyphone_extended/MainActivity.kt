@@ -109,7 +109,6 @@ import com.fabiantorrestech.lockmyphone_extended.ui.LockSettings
 import com.fabiantorrestech.lockmyphone_extended.ui.FixRequest
 import com.fabiantorrestech.lockmyphone_extended.ui.LocationEditorScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.BeaconTools
-import com.fabiantorrestech.lockmyphone_extended.ui.PairedDeviceTools
 import com.fabiantorrestech.lockmyphone_extended.ui.PermissionsScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.PermissionRow
 import com.fabiantorrestech.lockmyphone_extended.ui.PermissionActions
@@ -120,8 +119,6 @@ import com.fabiantorrestech.lockmyphone_extended.core.perm.PermissionNeeds
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
-import com.fabiantorrestech.lockmyphone_extended.trigger.location.PairedDevices
-import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
 import com.fabiantorrestech.lockmyphone_extended.ui.BeaconModeUiState
 import com.fabiantorrestech.lockmyphone_extended.core.service.BeaconMode
 import com.fabiantorrestech.lockmyphone_extended.ui.CalendarEditorScreen
@@ -258,9 +255,6 @@ class MainActivity : ComponentActivity() {
     private val bluetoothAdvertiseLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { BeaconMode.sync(this) }
 
-    private val bluetoothConnectLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { onLocationPermissionChanged() }
-
     private val bluetoothScanLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { onLocationPermissionChanged() }
 
@@ -284,7 +278,6 @@ class MainActivity : ComponentActivity() {
             onEnableLocationServices = { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) },
             onGrantCalendar = { calendarPermissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
             onGrantBluetoothScan = ::requestBluetoothScan,
-            onGrantBluetoothConnect = ::requestBluetoothConnect,
             onTurnOnNfc = ::openNfcSettings,
         )
     }
@@ -1140,7 +1133,7 @@ class MainActivity : ComponentActivity() {
                         watch = { durationMs, onSightings -> locationManager.beaconScanner.watch(durationMs, onSightings) },
                         defaultPreset = beaconPreset,
                         defaultTiming = BeaconTiming.of(beaconPreset, beaconCustomTiming),
-                        status = { place, device -> locationManager.beaconStatus(place, device) },
+                        status = { place -> locationManager.beaconStatus(place) },
                         rename = { key, address, name ->
                             scope.launch {
                                 // A whole beacon's name lives under its address, so all its formats share it.
@@ -1163,16 +1156,6 @@ class MainActivity : ComponentActivity() {
                             startScan = { locationManager.startWifiScan() },
                         )
                     },
-                    pairedDeviceTools = PairedDeviceTools(
-                        hasPermission = setupStatus.value.bluetoothConnectGranted,
-                        onRequestPermission = ::requestBluetoothConnect,
-                        list = { PairedDevices.list(this) },
-                        seenNearby = if (setupStatus.value.bluetoothScanGranted) {
-                            { locationManager.beaconScanner.seenAddresses(BEACON_DISCOVER_MS) }
-                        } else {
-                            null
-                        },
-                    ),
                     onSlotsChange = { slotDrafts = it },
                     slotClash = draft.takeIf { it.enabled && it.mode == LocationMode.TIME_SLOTS }?.let { place ->
                         val self = TimedCommitment(placeKey(place.id), place.name, slotDrafts.map(LocationSlot::asSchedule))
@@ -1522,18 +1505,11 @@ class MainActivity : ComponentActivity() {
 
         // The location rows only matter once a place uses GPS or Wi-Fi; the Bluetooth row once one uses a beacon.
         LaunchedEffect(locations) {
-            // Hearing a paired device nearby is a scan, like a beacon; being connected to it isn't.
-            val scansNearby = { place: LocationTrigger -> place.uses(PlaceSignal.BT_DEVICE) && place.btDetection == BtDetection.NEARBY }
-            val needBeacon = locations.any { it.uses(PlaceSignal.BEACON) || scansNearby(it) }
+            val needBeacon = locations.any { it.uses(PlaceSignal.BEACON) }
             val needLocation = needBeacon || locations.any { it.usesGps || it.uses(PlaceSignal.WIFI) }
-            val needConnect = locations.any { it.uses(PlaceSignal.BT_DEVICE) }
             val current = setupStatus.value
-            if (current.locationTriggersExist != needLocation || current.beaconPlacesExist != needBeacon || current.btDevicePlacesExist != needConnect) {
-                setupStatus.value = current.copy(
-                    locationTriggersExist = needLocation,
-                    beaconPlacesExist = needBeacon,
-                    btDevicePlacesExist = needConnect,
-                )
+            if (current.locationTriggersExist != needLocation || current.beaconPlacesExist != needBeacon) {
+                setupStatus.value = current.copy(locationTriggersExist = needLocation, beaconPlacesExist = needBeacon)
             }
         }
 
@@ -1799,8 +1775,6 @@ class MainActivity : ComponentActivity() {
             beaconPlacesExist = setupStatus.value.beaconPlacesExist,
             calendarGranted = container.calendarTriggerManager.reader.hasPermission(),
             bluetoothScanGranted = container.locationTriggerManager.beaconScanner.hasPermission(),
-            btDevicePlacesExist = setupStatus.value.btDevicePlacesExist,
-            bluetoothConnectGranted = PairedDevices.hasPermission(this),
             nearbyScanGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || isGranted(Manifest.permission.BLUETOOTH_SCAN),
             bluetoothAdvertiseGranted = BeaconMode.hasPermission(this),
             nfcTagsExist = setupStatus.value.nfcTagsExist,
@@ -1870,14 +1844,6 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Paired devices need "Nearby devices" (connect) on Android 12+; older versions need nothing. */
-    private fun requestBluetoothConnect() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            bluetoothConnectLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            onLocationPermissionChanged()
-        }
-    }
-
     /** Beacons need "Nearby devices" (Android 12+); older versions only need location. */
     private fun requestBluetoothScan() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -1974,7 +1940,6 @@ class MainActivity : ComponentActivity() {
         )
         AppPermission.BACKGROUND_LOCATION -> listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         AppPermission.NEARBY_SCAN -> listOf(Manifest.permission.BLUETOOTH_SCAN)
-        AppPermission.NEARBY_CONNECT -> listOf(Manifest.permission.BLUETOOTH_CONNECT)
         AppPermission.NEARBY_ADVERTISE -> listOf(Manifest.permission.BLUETOOTH_ADVERTISE)
         AppPermission.CALENDAR -> listOf(Manifest.permission.READ_CALENDAR)
         else -> emptyList()
@@ -1991,7 +1956,6 @@ class MainActivity : ComponentActivity() {
             AppPermission.BACKGROUND_LOCATION -> setupActions.onGrantBackgroundLocation()
             AppPermission.LOCATION_SERVICES -> setupActions.onEnableLocationServices()
             AppPermission.NEARBY_SCAN -> setupActions.onGrantBluetoothScan()
-            AppPermission.NEARBY_CONNECT -> setupActions.onGrantBluetoothConnect()
             AppPermission.NEARBY_ADVERTISE -> requestBluetoothAdvertise()
             AppPermission.CALENDAR -> setupActions.onGrantCalendar()
             AppPermission.NOTIFICATION_ACCESS -> setupActions.onGrantNotificationAccess()

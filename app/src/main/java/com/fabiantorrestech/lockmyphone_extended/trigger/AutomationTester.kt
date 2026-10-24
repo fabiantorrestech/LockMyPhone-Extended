@@ -4,7 +4,6 @@ import android.content.Context
 import com.fabiantorrestech.lockmyphone_extended.R
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTriggerKind
-import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
 import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationSlot
@@ -21,7 +20,6 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.location.Readings
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.RangeRules
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.WifiRules
 import com.fabiantorrestech.lockmyphone_extended.trigger.location.knownOneMeterDbm
-import com.fabiantorrestech.lockmyphone_extended.trigger.location.nearbyDeviceKey
 import com.fabiantorrestech.lockmyphone_extended.trigger.schedule.ScheduleCalculator
 import com.fabiantorrestech.lockmyphone_extended.data.db.WakeTrigger
 import com.fabiantorrestech.lockmyphone_extended.trigger.wake.SleepPlaceChecker
@@ -179,7 +177,7 @@ class AutomationTester(
         for (signal in draft.signalSet) {
             // Each signal on its own, then all of them together below.
             val alone = LocationRules.presence(draft.copy(signals = setOf(signal.name), requireAll = true), reading.readings)
-            lines += TestLine(mark(alone), "${string(signalName(signal))}: ${signalDetail(signal, draft, reading.readings, reading.heard, alone)}")
+            lines += TestLine(mark(alone), "${string(signalName(signal))}: ${signalDetail(signal, draft, reading.readings, reading.heard)}")
         }
         val presence = LocationRules.presence(draft, reading.readings)
         if (draft.signalSet.size > 1) {
@@ -287,7 +285,6 @@ class AutomationTester(
         draft: LocationTrigger,
         readings: Readings,
         heard: Map<String, Int>?,
-        presence: Presence,
     ): String = when (signal) {
         PlaceSignal.GPS -> readings.fix?.let { fix ->
             val distance = LocationRules.distanceMeters(fix.latitude, fix.longitude, draft.latitude, draft.longitude).toInt()
@@ -301,11 +298,6 @@ class AutomationTester(
             else -> string(R.string.test_wifi_other, readings.wifi.ssid ?: readings.wifi.bssid)
         }
         PlaceSignal.BEACON -> rssiDetail(heard, draft.beaconKey, draft.beaconRssiThreshold, draft.knownOneMeterDbm)
-        PlaceSignal.BT_DEVICE -> if (draft.btDetection == BtDetection.NEARBY) {
-            rssiDetail(heard, nearbyDeviceKey(draft), draft.btRssiThreshold)
-        } else {
-            string(if (presence == Presence.INSIDE) R.string.test_bt_connected else R.string.test_bt_not_connected)
-        }
         PlaceSignal.CHARGER -> readings.charger?.let {
             string(if (it.pluggedIn) (if (it.wireless) R.string.test_charger_wireless else R.string.test_charger_wired) else R.string.test_charger_none)
         } ?: string(R.string.test_signal_unknown)
@@ -327,7 +319,6 @@ class AutomationTester(
         PlaceSignal.GPS -> R.string.signal_gps
         PlaceSignal.WIFI -> R.string.signal_wifi
         PlaceSignal.BEACON -> R.string.signal_beacon
-        PlaceSignal.BT_DEVICE -> R.string.signal_bt_device
         PlaceSignal.CHARGER -> R.string.signal_charger
     }
 

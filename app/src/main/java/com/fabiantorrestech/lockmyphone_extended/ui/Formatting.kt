@@ -8,7 +8,6 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTriggerKind
 import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarLengthMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.CalendarTrigger
-import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
 import com.fabiantorrestech.lockmyphone_extended.data.db.ChargerMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.PlaceSignal
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMode
@@ -190,10 +189,6 @@ fun formatLocationTrigger(context: Context, trigger: LocationTrigger, profileNam
             add(context.getString(R.string.location_summary_wifi, names + more))
         }
         if (trigger.uses(PlaceSignal.BEACON)) add(context.getString(R.string.location_summary_beacon, trigger.beaconName ?: "?"))
-        if (trigger.uses(PlaceSignal.BT_DEVICE)) {
-            val summary = if (trigger.btDetection == BtDetection.NEARBY) R.string.location_summary_bt_near else R.string.location_summary_bt_connected
-            add(context.getString(summary, trigger.btName ?: "?"))
-        }
         if (trigger.usesCharger) {
             add(context.getString(if (trigger.chargerMode == ChargerMode.WIRELESS) R.string.location_summary_wireless else R.string.location_summary_charger))
         }

@@ -1,6 +1,5 @@
 package com.fabiantorrestech.lockmyphone_extended.core.perm
 
-import com.fabiantorrestech.lockmyphone_extended.data.db.BtDetection
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.data.db.PlaceSignal
@@ -16,11 +15,8 @@ enum class AppPermission {
     BACKGROUND_LOCATION,
     LOCATION_SERVICES,
 
-    /** "Nearby devices": finding beacons (and paired devices nearby). */
+    /** "Nearby devices": finding beacons. */
     NEARBY_SCAN,
-
-    /** "Nearby devices": listing paired devices and hearing them connect. */
-    NEARBY_CONNECT,
 
     /** "Nearby devices": "Act as a beacon". */
     NEARBY_ADVERTISE,
@@ -59,7 +55,6 @@ object PermissionNeeds {
     fun forSignal(place: LocationTrigger, signal: PlaceSignal): Set<AppPermission> = when (signal) {
         PlaceSignal.GPS, PlaceSignal.WIFI -> LOCATION
         PlaceSignal.BEACON -> SCAN
-        PlaceSignal.BT_DEVICE -> if (place.btDetection == BtDetection.NEARBY) SCAN else setOf(AppPermission.NEARBY_CONNECT)
         PlaceSignal.CHARGER -> emptySet()
     }
 

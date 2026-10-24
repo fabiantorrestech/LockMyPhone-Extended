@@ -176,7 +176,10 @@ object BeaconRules {
     fun appKey(serviceData: ByteArray): String? =
         if (serviceData.size < 4) null else "app:${hex(serviceData, 0, 4)}"
 
-    fun deviceKey(address: String): String = "device:${address.uppercase(Locale.ROOT)}"
+    fun deviceKey(address: String): String = "device:${normalizeAddress(address)}"
+
+    /** A Bluetooth address as the app keys it: upper case. */
+    fun normalizeAddress(address: String): String = address.uppercase(Locale.ROOT)
 
     /** The 4 bytes this app advertises in beacon mode. */
     fun appPayload(id: Int): ByteArray = byteArrayOf((id ushr 24).toByte(), (id ushr 16).toByte(), (id ushr 8).toByte(), id.toByte())

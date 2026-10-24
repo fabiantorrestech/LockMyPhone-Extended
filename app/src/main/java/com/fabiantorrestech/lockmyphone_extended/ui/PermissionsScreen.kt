@@ -73,7 +73,6 @@ private val RUNTIME_PERMISSIONS = setOf(
     AppPermission.PRECISE_LOCATION,
     AppPermission.BACKGROUND_LOCATION,
     AppPermission.NEARBY_SCAN,
-    AppPermission.NEARBY_CONNECT,
     AppPermission.NEARBY_ADVERTISE,
     AppPermission.CALENDAR,
 )
@@ -205,7 +204,6 @@ fun SetupStatus.grantedPermissions(): Set<AppPermission> = buildSet {
     if (backgroundLocationGranted) add(AppPermission.BACKGROUND_LOCATION)
     if (locationServicesOn) add(AppPermission.LOCATION_SERVICES)
     if (nearbyScanGranted) add(AppPermission.NEARBY_SCAN)
-    if (bluetoothConnectGranted) add(AppPermission.NEARBY_CONNECT)
     if (bluetoothAdvertiseGranted) add(AppPermission.NEARBY_ADVERTISE)
     if (calendarGranted) add(AppPermission.CALENDAR)
     if (notificationAccessGranted) add(AppPermission.NOTIFICATION_ACCESS)
@@ -230,7 +228,6 @@ fun permissionLabel(permission: AppPermission): Int = when (permission) {
     AppPermission.BACKGROUND_LOCATION -> R.string.perm_background_location
     AppPermission.LOCATION_SERVICES -> R.string.perm_location_services
     AppPermission.NEARBY_SCAN -> R.string.perm_nearby_scan
-    AppPermission.NEARBY_CONNECT -> R.string.perm_nearby_connect
     AppPermission.NEARBY_ADVERTISE -> R.string.perm_nearby_advertise
     AppPermission.CALENDAR -> R.string.perm_calendar
     AppPermission.NOTIFICATION_ACCESS -> R.string.perm_notification_access
@@ -248,7 +245,6 @@ private fun permissionReason(permission: AppPermission): Int = when (permission)
     AppPermission.BACKGROUND_LOCATION -> R.string.perm_background_location_why
     AppPermission.LOCATION_SERVICES -> R.string.perm_location_services_why
     AppPermission.NEARBY_SCAN -> R.string.perm_nearby_scan_why
-    AppPermission.NEARBY_CONNECT -> R.string.perm_nearby_connect_why
     AppPermission.NEARBY_ADVERTISE -> R.string.perm_nearby_advertise_why
     AppPermission.CALENDAR -> R.string.perm_calendar_why
     AppPermission.NOTIFICATION_ACCESS -> R.string.perm_notification_access_why
