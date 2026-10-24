@@ -162,6 +162,7 @@ import com.fabiantorrestech.lockmyphone_extended.ui.LocalUiMode
 import com.fabiantorrestech.lockmyphone_extended.ui.QuickLockOptionsScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.SetupAssistantScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.SetupResult
+import com.fabiantorrestech.lockmyphone_extended.ui.RelockUi
 import com.fabiantorrestech.lockmyphone_extended.data.EssentialApps
 import com.fabiantorrestech.lockmyphone_extended.data.Situation
 import androidx.compose.runtime.CompositionLocalProvider
@@ -911,6 +912,12 @@ class MainActivity : ComponentActivity() {
                 onOpenAssistant = { assistantOpen.value = true },
                 popupAppCount = popupPackages.size,
                 onEditPopupApps = { screen = Screen.POPUP_APPS },
+                relocks = RelockUi(
+                    entries = container.lockController.relockLog.entries.collectAsState().value,
+                    popupPackages = popupPackages,
+                    onAllowPopups = { pkg -> container.settingsStore.setPopupPackages(container.settingsStore.popupPackages.value + pkg) },
+                    onClear = container.lockController.relockLog::clear,
+                ),
                 startActions = remember {
                     StartLockActions(
                         onEditQuickApps = { screen = Screen.QUICK_APPS },

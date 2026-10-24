@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.ManageSearch
+import com.fabiantorrestech.lockmyphone_extended.core.diag.RelockEntry
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.WbTwilight
@@ -196,6 +198,7 @@ fun HomeScreen(
     onOpenAssistant: () -> Unit,
     popupAppCount: Int,
     onEditPopupApps: () -> Unit,
+    relocks: RelockUi,
     modifier: Modifier = Modifier,
 ) {
     val pro = uiMode == UiMode.PRO
@@ -304,6 +307,8 @@ fun HomeScreen(
                             onUnlockIntoAllowedAppChange,
                             popupAppCount = popupAppCount.takeIf { pro },
                             onEditPopupApps = onEditPopupApps,
+                            relocks = relocks,
+                            appLabel = appLabel,
                         )
                         if (pro) LengthPresetsCard(presetsSec, onPresetsChange)
 
@@ -364,6 +369,14 @@ private fun HomeTab.icon(): ImageVector = when (this) {
     HomeTab.AUTOMATIONS -> Icons.Filled.Schedule
     HomeTab.SETTINGS -> Icons.Filled.Settings
 }
+
+/** "Why did it lock?": the recent relocks, and allowing a popup app from one of them. */
+class RelockUi(
+    val entries: List<RelockEntry>,
+    val popupPackages: Set<String>,
+    val onAllowPopups: (String) -> Unit,
+    val onClear: () -> Unit,
+)
 
 /** Simple or Pro: the first card in Settings, in both modes. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1259,8 +1272,11 @@ private fun DuringLockCard(
     /** How many apps may show popups during a lock; null hides the row (Simple mode). */
     popupAppCount: Int?,
     onEditPopupApps: () -> Unit,
+    relocks: RelockUi,
+    appLabel: (String) -> String,
 ) {
     var choosingHome by remember { mutableStateOf(false) }
+    var showingRelocks by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(vertical = 8.dp)) {
             Text(
@@ -1300,7 +1316,25 @@ private fun DuringLockCard(
                     onClick = onEditPopupApps,
                 )
             }
+            SettingsRow(
+                icon = Icons.Filled.ManageSearch,
+                title = stringResource(R.string.relock_history_title),
+                summary = relocks.entries.firstOrNull()?.let { last ->
+                    stringResource(R.string.relock_history_last, appLabel(last.packageName))
+                } ?: stringResource(R.string.relock_history_none_short),
+                onClick = { showingRelocks = true },
+            )
         }
+    }
+    if (showingRelocks) {
+        RelockHistoryDialog(
+            entries = relocks.entries,
+            appLabel = appLabel,
+            popupPackages = relocks.popupPackages,
+            onAllowPopups = relocks.onAllowPopups,
+            onClear = relocks.onClear,
+            onDismiss = { showingRelocks = false },
+        )
     }
     if (choosingHome) {
         ChoiceDialog(

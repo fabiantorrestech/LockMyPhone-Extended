@@ -1190,4 +1190,17 @@
     <string name="assist_done_creates">Your starter locks:</string>
     <string name="assist_done_bedtime">Sleep every night, %1$s to %2$s</string>
     <string name="assist_done_pro">The app is in Simple mode. Settings → Pro shows every fine-grained control (beacons, timing, intent API…).</string>
+
+    <!-- 0.10.0: why did it lock? -->
+    <string name="relock_history_title">Why did it lock?</string>
+    <string name="relock_history_last">Last time: %1$s opened over an allowed app</string>
+    <string name="relock_history_none_short">See what made the phone lock again during a lock</string>
+    <string name="relock_history_none">Nothing yet. When a window outside your allowed apps locks the phone, it\'s listed here.</string>
+    <string name="relock_history_hint">The last times something outside your allowed apps came to the front during a lock. Only app and window names are kept.</string>
+    <string name="relock_history_over">Over %1$s</string>
+    <string name="relock_history_screen">A screen of another app. Screens always lock; add the app to the lock\'s allowed apps if you need it.</string>
+    <string name="relock_history_popup">A popup, bubble or overlay drawn over the app you were using.</string>
+    <string name="relock_history_allow">Allow popups from %1$s</string>
+    <string name="relock_history_allowed">✓ Its popups are allowed in new locks</string>
+    <string name="relock_history_clear">Clear</string>
 </resources>

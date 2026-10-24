@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.fabiantorrestech.lockmyphone_extended.core.diag.ForegroundLog
+import com.fabiantorrestech.lockmyphone_extended.core.diag.RelockEntry
+import com.fabiantorrestech.lockmyphone_extended.core.diag.RelockLog
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndController
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.GrayscaleController
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
@@ -81,6 +83,9 @@ class LockController(
      * pass can't resume and the phone relocks.
      */
     private var lastAppInFront: String? = null
+
+    /** Why the phone locked again (Settings → During a lock → Why did it lock?). */
+    val relockLog = RelockLog(context)
 
     /** Diagnostics only: [lastAppInFront] when the screen turned off and paused the pass. */
     private var appInFrontWhenPaused: String? = null
@@ -422,6 +427,7 @@ class LockController(
         )
         // System components (keyguard, shade, keyboards) sit on top of the real app, so they
         // don't count. This app does: its picker and countdown screen are pass screens.
+        val previousApp = lastAppInFront
         if (!alwaysAllowed || packageName == context.packageName) lastAppInFront = packageName
         val decision = if (isKeyguardLocked()) {
             ForegroundDecision.IGNORE
@@ -451,7 +457,9 @@ class LockController(
         )
         if (relock) {
             appInfoVisit = null
-            Log.i(TAG, "Left allowed apps (foreground=$packageName/$className); relocking")
+            val isActivity = foregroundPolicy.isActivity(packageName, className)
+            Log.i(TAG, "Left allowed apps (foreground=$packageName/$className, activity=$isActivity, from=$previousApp); relocking")
+            relockLog.record(RelockEntry(clock(), packageName, className, isActivity, previousApp))
             cancelLockScreenChoice()
             store.save(engine.clearPass(store.current))
             relocker.lockNow()
