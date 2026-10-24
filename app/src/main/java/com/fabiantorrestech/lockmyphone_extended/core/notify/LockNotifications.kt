@@ -87,7 +87,7 @@ class LockNotifications(
         val text = when {
             !passesAvailable -> context.getString(R.string.notif_passes_unavailable)
             note != null -> "${session.label} · $note"
-            else -> session.label
+            else -> listOfNotNull(session.label, limitNote(session)).joinToString(" · ")
         }
         val builder = NotificationCompat.Builder(context, CHANNEL_STATUS)
             .setSmallIcon(R.drawable.ic_stat_lock)
@@ -151,6 +151,21 @@ class LockNotifications(
             builder.addAction(lockScreenAction(context.getString(R.string.notif_action_refresh), refresh()))
         }
         return builder.build()
+    }
+
+    /** Where a Limited lock is, for the notification: a session open, a cooldown, or ready. */
+    private fun limitNote(session: LockSession): String? {
+        val limit = session.limit ?: return null
+        val limitState = session.limitState
+        val cooldownEnd = limitState.cooldownEndsAtMs?.takeIf { it > System.currentTimeMillis() }
+        return when {
+            limitState.sessionRunning -> context.getString(R.string.notif_limit_session)
+            cooldownEnd != null -> context.getString(
+                R.string.notif_limit_cooldown,
+                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(cooldownEnd)),
+            )
+            else -> context.getString(R.string.notif_limit_ready, (limit.sessionMs / 60_000).toInt())
+        }
     }
 
     /** Re-posts the lock notification (same ID as the foreground service's) after a change. */

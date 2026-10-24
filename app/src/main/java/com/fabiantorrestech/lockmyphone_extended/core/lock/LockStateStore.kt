@@ -50,6 +50,7 @@ class LockStateStore(context: Context) {
                     putString(KEY_HOME_ACTION, state.session.homeAction.name)
                     putBoolean(KEY_UNLOCK_INTO_ALLOWED_APP, state.session.unlockIntoAllowedApp)
                     putStringSet(KEY_POPUP_PACKAGES, state.session.popupPackages)
+                    putLimit(state.session.limit, state.session.limitState)
                 }
             }
         }
@@ -88,9 +89,58 @@ class LockStateStore(context: Context) {
                 unlockIntoAllowedApp = prefs.getBoolean(KEY_UNLOCK_INTO_ALLOWED_APP, true),
                 // Locks saved before 0.10.0 have none.
                 popupPackages = prefs.getStringSet(KEY_POPUP_PACKAGES, null)?.toSet() ?: emptySet(),
+                limit = readLimit(),
+                limitState = readLimitState(),
             )
         )
     }
+
+    private fun SharedPreferences.Editor.putLimit(limit: LimitPolicy?, limitState: LimitState) {
+        if (limit == null) {
+            LIMIT_KEYS.forEach(::remove)
+            return
+        }
+        putLong(KEY_LIMIT_SESSION, limit.sessionMs)
+        putLong(KEY_LIMIT_FIRST_COOLDOWN, limit.firstCooldownMs)
+        putLong(KEY_LIMIT_COOLDOWN_STEP, limit.cooldownStepMs)
+        putLong(KEY_LIMIT_MAX_COOLDOWN, limit.maxCooldownMs)
+        putLong(KEY_LIMIT_PEEK, limit.peekMs)
+        putInt(KEY_LIMIT_PEEK_COUNT, limit.peekCount)
+        putBoolean(KEY_LIMIT_IN_SESSION, limitState.inSession)
+        putLong(KEY_LIMIT_USED, limitState.usedMs)
+        putOrRemove(KEY_LIMIT_COUNTING_SINCE, limitState.countingSinceMs)
+        putOrRemove(KEY_LIMIT_SCREEN_OFF_AT, limitState.screenOffAtMs)
+        putInt(KEY_LIMIT_SESSIONS_DONE, limitState.sessionsDone)
+        putInt(KEY_LIMIT_PEEKS_USED, limitState.peeksUsed)
+        putOrRemove(KEY_LIMIT_COOLDOWN_ENDS, limitState.cooldownEndsAtMs)
+    }
+
+    /** A normal lock (or one saved before Limited locks) has none. */
+    private fun readLimit(): LimitPolicy? {
+        if (!prefs.contains(KEY_LIMIT_SESSION)) return null
+        return LimitPolicy(
+            sessionMs = prefs.getLong(KEY_LIMIT_SESSION, 0L),
+            firstCooldownMs = prefs.getLong(KEY_LIMIT_FIRST_COOLDOWN, 0L),
+            cooldownStepMs = prefs.getLong(KEY_LIMIT_COOLDOWN_STEP, 0L),
+            maxCooldownMs = prefs.getLong(KEY_LIMIT_MAX_COOLDOWN, 0L),
+            peekMs = prefs.getLong(KEY_LIMIT_PEEK, 0L),
+            peekCount = prefs.getInt(KEY_LIMIT_PEEK_COUNT, 0),
+        )
+    }
+
+    /**
+     * After a process restart a run that was counting keeps counting from when it started (the safe
+     * side: the time the process was gone counts), and the next window seen corrects it.
+     */
+    private fun readLimitState(): LimitState = LimitState(
+        inSession = prefs.getBoolean(KEY_LIMIT_IN_SESSION, false),
+        usedMs = prefs.getLong(KEY_LIMIT_USED, 0L),
+        countingSinceMs = prefs.getLongOrNull(KEY_LIMIT_COUNTING_SINCE),
+        screenOffAtMs = prefs.getLongOrNull(KEY_LIMIT_SCREEN_OFF_AT),
+        sessionsDone = prefs.getInt(KEY_LIMIT_SESSIONS_DONE, 0),
+        peeksUsed = prefs.getInt(KEY_LIMIT_PEEKS_USED, 0),
+        cooldownEndsAtMs = prefs.getLongOrNull(KEY_LIMIT_COOLDOWN_ENDS),
+    )
 
     /** A lock saved before sources existed reads as [LockSource.UNKNOWN]. */
     private fun readSource(): LockSource {
@@ -136,5 +186,23 @@ class LockStateStore(context: Context) {
         const val KEY_HOME_ACTION = "home_action"
         const val KEY_UNLOCK_INTO_ALLOWED_APP = "unlock_into_allowed_app"
         const val KEY_POPUP_PACKAGES = "popup_packages"
+        const val KEY_LIMIT_SESSION = "limit_session_ms"
+        const val KEY_LIMIT_FIRST_COOLDOWN = "limit_first_cooldown_ms"
+        const val KEY_LIMIT_COOLDOWN_STEP = "limit_cooldown_step_ms"
+        const val KEY_LIMIT_MAX_COOLDOWN = "limit_max_cooldown_ms"
+        const val KEY_LIMIT_PEEK = "limit_peek_ms"
+        const val KEY_LIMIT_PEEK_COUNT = "limit_peek_count"
+        const val KEY_LIMIT_IN_SESSION = "limit_in_session"
+        const val KEY_LIMIT_USED = "limit_used_ms"
+        const val KEY_LIMIT_COUNTING_SINCE = "limit_counting_since"
+        const val KEY_LIMIT_SCREEN_OFF_AT = "limit_screen_off_at"
+        const val KEY_LIMIT_SESSIONS_DONE = "limit_sessions_done"
+        const val KEY_LIMIT_PEEKS_USED = "limit_peeks_used"
+        const val KEY_LIMIT_COOLDOWN_ENDS = "limit_cooldown_ends"
+        val LIMIT_KEYS = listOf(
+            KEY_LIMIT_SESSION, KEY_LIMIT_FIRST_COOLDOWN, KEY_LIMIT_COOLDOWN_STEP, KEY_LIMIT_MAX_COOLDOWN, KEY_LIMIT_PEEK,
+            KEY_LIMIT_PEEK_COUNT, KEY_LIMIT_IN_SESSION, KEY_LIMIT_USED, KEY_LIMIT_COUNTING_SINCE, KEY_LIMIT_SCREEN_OFF_AT,
+            KEY_LIMIT_SESSIONS_DONE, KEY_LIMIT_PEEKS_USED, KEY_LIMIT_COOLDOWN_ENDS,
+        )
     }
 }

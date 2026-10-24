@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
+import com.fabiantorrestech.lockmyphone_extended.core.lock.LimitPolicy
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockSession
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 
@@ -29,6 +30,12 @@ import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
  *   of [allowedPackages]. Added in DB version 26.
  * @param managedBy the app that keeps this profile's apps in sync (ADR 0008), or null for the
  *   user's own. Its apps can't be edited here. Added in DB version 27.
+ * @param lockStyle LOCKED (only allowed apps) or LIMITED (any app in short sessions with growing
+ *   cooldowns; the allowed apps are exempt). Added with the limit* fields in DB version 28.
+ * @param limitSessionMinutes a Limited session's length.
+ * @param limitCooldownMinutes the first cooldown; each later one is [limitCooldownStepMinutes]
+ *   longer, up to [limitMaxCooldownMinutes].
+ * @param limitPeekSeconds a shorter session is a peek (no cooldown), [limitPeekCount] times a lock.
  */
 @Entity(tableName = "profiles", indices = [Index(value = ["name"], unique = true)])
 data class LockProfile(
@@ -50,7 +57,33 @@ data class LockProfile(
     @ColumnInfo(defaultValue = "") val nfcUnlockTagIds: Set<String> = emptySet(),
     @ColumnInfo(defaultValue = "") val hiddenPackages: Set<String> = emptySet(),
     val managedBy: String? = null,
+    @ColumnInfo(defaultValue = "LOCKED") val lockStyle: LockStyle = LockStyle.LOCKED,
+    @ColumnInfo(defaultValue = "5") val limitSessionMinutes: Int = 5,
+    @ColumnInfo(defaultValue = "2") val limitCooldownMinutes: Int = 2,
+    @ColumnInfo(defaultValue = "1") val limitCooldownStepMinutes: Int = 1,
+    @ColumnInfo(defaultValue = "10") val limitMaxCooldownMinutes: Int = 10,
+    @ColumnInfo(defaultValue = "30") val limitPeekSeconds: Int = 30,
+    @ColumnInfo(defaultValue = "3") val limitPeekCount: Int = 3,
 ) {
-
     val bypassDelayMs: Long? get() = if (bypassEnabled) bypassWaitMinutes * 60_000L else null
+
+    /** A Limited lock's sessions and cooldowns, or null for a normal one. */
+    val limitPolicy: LimitPolicy?
+        get() = if (lockStyle != LockStyle.LIMITED) null else LimitPolicy(
+            sessionMs = limitSessionMinutes * 60_000L,
+            firstCooldownMs = limitCooldownMinutes * 60_000L,
+            cooldownStepMs = limitCooldownStepMinutes * 60_000L,
+            maxCooldownMs = limitMaxCooldownMinutes * 60_000L,
+            peekMs = limitPeekSeconds * 1_000L,
+            peekCount = limitPeekCount,
+        )
+}
+
+/** How strict a profile's lock is. */
+enum class LockStyle {
+    /** Only the allowed apps (and the phone) work. */
+    LOCKED,
+
+    /** Any app, in short sessions, each followed by a growing cooldown ([LimitPolicy]). */
+    LIMITED,
 }

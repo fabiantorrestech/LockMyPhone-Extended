@@ -34,6 +34,15 @@ sealed interface StartDecision {
     data class Refused(val running: LockSession) : StartDecision
 }
 
+/** What an unlock does to a Limited lock ([LockEngine.limitedUnlock]). */
+sealed interface LimitedUnlock {
+    /** A cooldown is running: the normal unlock rules apply (only exempt apps, through a pass). */
+    data class Cooldown(val state: LockState.Locked, val untilMs: Long) : LimitedUnlock
+
+    /** A session is open; [resumed] when it's the same one as before a short screen-off. */
+    data class Session(val state: LockState.Locked, val resumed: Boolean) : LimitedUnlock
+}
+
 /** What to do when a new app window comes to the front while the device is unlocked. */
 enum class ForegroundDecision {
     IGNORE,
@@ -89,6 +98,7 @@ class LockEngine {
         hiddenPackages: Set<String> = emptySet(),
         options: GlobalLockOptions = GlobalLockOptions(),
         restartOwn: Boolean = false,
+        limit: LimitPolicy? = null,
     ): StartDecision {
         require(durationMs > 0) { "durationMs must be positive" }
         require(bypassDelayMs == null || bypassDelayMs > 0) { "bypassDelayMs must be positive" }
@@ -112,6 +122,7 @@ class LockEngine {
                 homeAction = options.homeAction,
                 unlockIntoAllowedApp = options.unlockIntoAllowedApp,
                 popupPackages = options.popupPackages,
+                limit = limit,
             )
         )
         // A lock whose time is up counts as over, even before its end alarm has run.
@@ -154,8 +165,100 @@ class LockEngine {
         isExpired(state, nowMs) -> UnlockDecision.END_LOCK
         !isActive(state, nowMs) -> UnlockDecision.NONE
         (state as LockState.Locked).session.passActive -> UnlockDecision.NONE
+        // A Limited lock's open session: the phone is usable.
+        state.session.limitState.sessionRunning -> UnlockDecision.NONE
         else -> UnlockDecision.RELOCK
     }
+
+    /**
+     * An unlock during a Limited lock (null for any other lock). A session that the screen paused
+     * for less than [LimitPolicy.GRACE_MS] continues; one paused longer ended when the screen went
+     * off ([closeSession]). Then, outside a cooldown, a new session starts with its full length.
+     */
+    fun limitedUnlock(state: LockState, nowMs: Long): LimitedUnlock? {
+        if (!isActive(state, nowMs)) return null
+        val locked = state as LockState.Locked
+        val policy = locked.session.limit ?: return null
+        var limitState = locked.session.limitState
+        if (limitState.inSession) {
+            val offAt = limitState.screenOffAtMs ?: return LimitedUnlock.Session(locked, resumed = true)
+            if (nowMs - offAt <= LimitPolicy.GRACE_MS) {
+                return LimitedUnlock.Session(locked.withLimitState(limitState.copy(screenOffAtMs = null)), resumed = true)
+            }
+            limitState = closeSession(policy, limitState, offAt)
+        }
+        val cooldownEnd = limitState.cooldownEndsAtMs
+        if (cooldownEnd != null && nowMs < cooldownEnd) {
+            return LimitedUnlock.Cooldown(locked.withLimitState(limitState), cooldownEnd)
+        }
+        val open = limitState.copy(inSession = true, usedMs = 0L, countingSinceMs = null, screenOffAtMs = null, cooldownEndsAtMs = null)
+        return LimitedUnlock.Session(locked.withLimitState(open), resumed = false)
+    }
+
+    /**
+     * A window came to the front during a Limited lock's running session: time counts while a
+     * counted app is in front, and stops on an exempt one (allowed apps, the phone, the system).
+     * Returns null when nothing changes.
+     */
+    fun limitedForeground(state: LockState, nowMs: Long, exempt: Boolean): LockState? {
+        val locked = state as? LockState.Locked ?: return null
+        val limitState = locked.session.limitState
+        if (locked.session.limit == null || !limitState.sessionRunning) return null
+        val counting = limitState.countingSinceMs
+        return when {
+            exempt && counting != null ->
+                locked.withLimitState(limitState.copy(usedMs = limitState.usedMs + (nowMs - counting).coerceAtLeast(0L), countingSinceMs = null))
+            !exempt && counting == null -> locked.withLimitState(limitState.copy(countingSinceMs = nowMs))
+            else -> null
+        }
+    }
+
+    /** The screen turned off during a Limited lock's session: it pauses, and stops counting. */
+    fun limitedScreenOff(state: LockState, nowMs: Long): LockState? {
+        val locked = state as? LockState.Locked ?: return null
+        val limitState = locked.session.limitState
+        if (locked.session.limit == null || !limitState.sessionRunning) return null
+        val counted = limitState.countingSinceMs?.let { (nowMs - it).coerceAtLeast(0L) } ?: 0L
+        return locked.withLimitState(limitState.copy(usedMs = limitState.usedMs + counted, countingSinceMs = null, screenOffAtMs = nowMs))
+    }
+
+    /** How much of the running session is left, or null without one. */
+    fun sessionLeftMs(state: LockState, nowMs: Long): Long? {
+        val session = (state as? LockState.Locked)?.session ?: return null
+        val policy = session.limit ?: return null
+        if (!session.limitState.sessionRunning) return null
+        return policy.sessionMs - usedMs(session.limitState, nowMs)
+    }
+
+    /** The session's time is up: it ends now, and its cooldown starts. */
+    fun endSession(state: LockState, nowMs: Long): LockState? {
+        val locked = state as? LockState.Locked ?: return null
+        val policy = locked.session.limit ?: return null
+        if (!locked.session.limitState.inSession) return null
+        return locked.withLimitState(closeSession(policy, locked.session.limitState, nowMs))
+    }
+
+    /**
+     * Ends a session at [endMs]. Only exempt apps used: nothing to pay. A short one is a peek while
+     * the lock has some left. Otherwise a cooldown starts, a step longer than the last.
+     */
+    private fun closeSession(policy: LimitPolicy, limitState: LimitState, endMs: Long): LimitState {
+        val used = usedMs(limitState, endMs)
+        val closed = LimitState(sessionsDone = limitState.sessionsDone, peeksUsed = limitState.peeksUsed)
+        return when {
+            used <= 0L -> closed
+            used < policy.peekMs && limitState.peeksUsed < policy.peekCount -> closed.copy(peeksUsed = limitState.peeksUsed + 1)
+            else -> closed.copy(
+                sessionsDone = limitState.sessionsDone + 1,
+                cooldownEndsAtMs = endMs + policy.cooldownMs(limitState.sessionsDone),
+            )
+        }
+    }
+
+    private fun usedMs(limitState: LimitState, nowMs: Long): Long =
+        limitState.usedMs + (limitState.countingSinceMs?.let { (nowMs - it).coerceAtLeast(0L) } ?: 0L)
+
+    private fun LockState.Locked.withLimitState(limitState: LimitState) = copy(session = session.copy(limitState = limitState))
 
     fun isAllowed(state: LockState, packageName: String): Boolean =
         state is LockState.Locked && packageName in state.session.allowedPackages
@@ -253,6 +356,8 @@ class LockEngine {
     ): ForegroundDecision {
         if (!isActive(state, nowMs)) return ForegroundDecision.IGNORE
         val session = (state as LockState.Locked).session
+        // A Limited lock's open session allows every app.
+        if (session.limitState.sessionRunning) return ForegroundDecision.IGNORE
         if (!session.passActive) return ForegroundDecision.IGNORE
         if (isAlwaysAllowed || packageName in session.allowedPackages) return ForegroundDecision.IGNORE
         if (isLauncher && session.homeAction != HomeAction.LOCK) return ForegroundDecision.REDIRECT

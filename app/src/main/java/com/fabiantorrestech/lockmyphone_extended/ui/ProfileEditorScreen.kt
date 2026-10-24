@@ -85,6 +85,9 @@ fun ProfileEditorScreen(
             }
         }
 
+        // Profiles only: Quick lock and Lock defaults are always Locked.
+        if (!isDefaults) LimitedLockSection(draft, onDraftChange)
+
         LockSettingsSections(
             settings = draft.toLockSettings(),
             presetsSec = presetsSec,

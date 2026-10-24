@@ -35,6 +35,58 @@ data class GlobalLockOptions(
 )
 
 /**
+ * A Limited lock: any app, in short sessions, each followed by a cooldown that grows by [cooldownStepMs]
+ * up to [maxCooldownMs]. Every unlock after a cooldown gets a full session, so you never come back
+ * to a few seconds left; picking the phone up again is what costs. Exempt apps (the lock's allowed
+ * apps, the phone and the system) don't count, and stay usable during a cooldown as in any lock.
+ *
+ * @param sessionMs how long one session lasts, counting only time outside exempt apps.
+ * @param peekMs a session shorter than this is a peek: no cooldown, up to [peekCount] times a lock.
+ */
+data class LimitPolicy(
+    val sessionMs: Long,
+    val firstCooldownMs: Long,
+    val cooldownStepMs: Long,
+    val maxCooldownMs: Long,
+    val peekMs: Long,
+    val peekCount: Int,
+) {
+    /** The cooldown after session [n] (0 for the first): the first, a step longer each time, up to the maximum. */
+    fun cooldownMs(n: Int): Long = minOf(firstCooldownMs + cooldownStepMs * n, maxOf(maxCooldownMs, firstCooldownMs))
+
+    companion object {
+        /** A screen-off shorter than this (an accidental power press) continues the same session. */
+        const val GRACE_MS = 10_000L
+    }
+}
+
+/**
+ * Where a Limited lock is.
+ *
+ * @param inSession a session is open: every app may be used.
+ * @param usedMs session time counted so far, not including the run since [countingSinceMs].
+ * @param countingSinceMs when the current run of counted time started (screen on, a counted app in
+ *   front); null while nothing counts.
+ * @param screenOffAtMs the screen turned off during the session; unlocking within
+ *   [LimitPolicy.GRACE_MS] continues it, later it ended at this time.
+ * @param sessionsDone sessions that ended in a cooldown, for the next cooldown's length.
+ * @param peeksUsed short sessions that didn't start a cooldown.
+ * @param cooldownEndsAtMs no session before this time; null if there's no cooldown.
+ */
+data class LimitState(
+    val inSession: Boolean = false,
+    val usedMs: Long = 0L,
+    val countingSinceMs: Long? = null,
+    val screenOffAtMs: Long? = null,
+    val sessionsDone: Int = 0,
+    val peeksUsed: Int = 0,
+    val cooldownEndsAtMs: Long? = null,
+) {
+    /** A session is open and the screen is on. */
+    val sessionRunning: Boolean get() = inSession && screenOffAtMs == null
+}
+
+/**
  * One lock period. All times are wall-clock epoch millis, so a reboot can't reset them.
  *
  * @param allowedPackages apps that may be used during this lock. This is a snapshot taken at
@@ -62,6 +114,8 @@ data class GlobalLockOptions(
  *   a pass instead of relocking, e.g. after tapping an allowed app's notification on the lock screen.
  * @param popupPackages apps whose non-activity windows (popups, bubbles, overlays) may show over an
  *   allowed app. Their own screens still relock.
+ * @param limit a Limited lock's sessions and cooldowns, or null for a normal lock.
+ * @param limitState where that Limited lock is.
  */
 data class LockSession(
     val label: String,
@@ -83,6 +137,8 @@ data class LockSession(
     val homeAction: HomeAction = HomeAction.LOCK,
     val unlockIntoAllowedApp: Boolean = true,
     val popupPackages: Set<String> = emptySet(),
+    val limit: LimitPolicy? = null,
+    val limitState: LimitState = LimitState(),
 ) {
     val bypassAllowed: Boolean get() = bypassDelayMs != null
     val bypassPending: Boolean get() = bypassEndsAtMs != null

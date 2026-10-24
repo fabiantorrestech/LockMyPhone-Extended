@@ -53,6 +53,7 @@ class ProfileLockStarter(
             hiddenPackages = profile.hiddenPackages,
             options = globalOptions(),
             restartOwn = restartOwn,
+            limit = profile.limitPolicy,
         )
     }
 

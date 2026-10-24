@@ -89,6 +89,14 @@ fun LockedScreen(
                 style = MaterialTheme.typography.displayMedium,
             )
             Text(stringResource(R.string.locked_until, endTime))
+            // A Limited lock's cooldown: when the next session can start.
+            session.limitState.cooldownEndsAtMs?.takeIf { it > now }?.let { next ->
+                Text(
+                    stringResource(R.string.locked_limit_cooldown, DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(next))),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             if (nfcGate) {
                 Text(
                     stringResource(R.string.nfc_gate_prompt),

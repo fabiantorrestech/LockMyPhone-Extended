@@ -21,6 +21,7 @@ import com.fabiantorrestech.lockmyphone_extended.data.db.WakeTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.BeaconName
 import com.fabiantorrestech.lockmyphone_extended.data.db.ChargerMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMatch
+import com.fabiantorrestech.lockmyphone_extended.data.db.LockStyle
 import com.fabiantorrestech.lockmyphone_extended.data.db.PlaceSignal
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.LocationSlot
@@ -272,6 +273,10 @@ object BackupJson {
         put("unlockResumeMode", p.unlockResumeMode.name); put("unlockChoiceSeconds", p.unlockChoiceSeconds)
         put("icon", p.icon ?: JSONObject.NULL); put("sortOrder", p.sortOrder)
         put("managedBy", p.managedBy ?: JSONObject.NULL)
+        put("lockStyle", p.lockStyle.name); put("limitSessionMinutes", p.limitSessionMinutes)
+        put("limitCooldownMinutes", p.limitCooldownMinutes); put("limitCooldownStepMinutes", p.limitCooldownStepMinutes)
+        put("limitMaxCooldownMinutes", p.limitMaxCooldownMinutes); put("limitPeekSeconds", p.limitPeekSeconds)
+        put("limitPeekCount", p.limitPeekCount)
     }
 
     private fun profileFromJson(o: JSONObject) = LockProfile(
@@ -284,6 +289,10 @@ object BackupJson {
         unlockResumeMode = enumOr(o.optString("unlockResumeMode"), UnlockResumeMode.RESUME_APP),
         unlockChoiceSeconds = o.optInt("unlockChoiceSeconds", 3), icon = o.optStringOrNull("icon"),
         sortOrder = o.optInt("sortOrder"), managedBy = o.optStringOrNull("managedBy"),
+        lockStyle = enumOr(o.optString("lockStyle"), LockStyle.LOCKED),
+        limitSessionMinutes = o.optInt("limitSessionMinutes", 5), limitCooldownMinutes = o.optInt("limitCooldownMinutes", 2),
+        limitCooldownStepMinutes = o.optInt("limitCooldownStepMinutes", 1), limitMaxCooldownMinutes = o.optInt("limitMaxCooldownMinutes", 10),
+        limitPeekSeconds = o.optInt("limitPeekSeconds", 30), limitPeekCount = o.optInt("limitPeekCount", 3),
     )
 
     private fun scheduleToJson(s: LockSchedule) = JSONObject().apply {
