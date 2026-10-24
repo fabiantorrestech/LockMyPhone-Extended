@@ -65,8 +65,10 @@ class LockEngine {
      * Starts a lock of [durationMs]. Only one lock runs at a time: if one is running, the new
      * lock replaces it only when its kind weighs more ([LockKind.weight]); then it runs with its
      * own settings and length, even if that ends sooner. Otherwise it's refused, including when
-     * it's the same automation's own running lock.
+     * it's the same automation's own running lock, unless [restartOwn].
      *
+     * @param restartOwn the same automation's own running lock is replaced (a Morning lock after
+     *   "Going back to sleep" starts again in full); any other running lock follows the weights.
      * @param bypassDelayMs the early-unlock wait, or null if early unlock isn't allowed.
      * @param hiddenPackages allowed apps left out of the lock-screen list.
      * @param options the global "During a lock" settings.
@@ -86,6 +88,7 @@ class LockEngine {
         source: LockSource,
         hiddenPackages: Set<String> = emptySet(),
         options: GlobalLockOptions = GlobalLockOptions(),
+        restartOwn: Boolean = false,
     ): StartDecision {
         require(durationMs > 0) { "durationMs must be positive" }
         require(bypassDelayMs == null || bypassDelayMs > 0) { "bypassDelayMs must be positive" }
@@ -116,6 +119,8 @@ class LockEngine {
         return when {
             running == null -> StartDecision.Started(new)
             source.kind.weight > running.source.kind.weight -> StartDecision.Replaced(new, running)
+            restartOwn && source.ownerId != null && running.source.kind == source.kind && running.source.ownerId == source.ownerId ->
+                StartDecision.Replaced(new, running)
             else -> StartDecision.Refused(running)
         }
     }

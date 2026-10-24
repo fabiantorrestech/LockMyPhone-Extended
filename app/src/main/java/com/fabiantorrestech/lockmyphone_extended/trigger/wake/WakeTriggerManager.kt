@@ -60,6 +60,12 @@ class WakeTriggerManager(
         }
         val zone = ZoneId.systemDefault()
         enabledTriggers().forEach { trigger ->
+            if (isRearmed(trigger, nowMs, zone)) {
+                // "Going back to sleep": a while without an unlock is enough, and it locks in full.
+                val decision = WakeRules.decideRearmedUnlock(trigger, nowMs, zone, previousUnlockMs)
+                act(trigger, decision, nowMs, zone, WakeRules.lockMs(trigger), restartOwn = true)
+                return@forEach
+            }
             val decision = when (val first = WakeRules.decideUnlock(trigger, nowMs, zone, previousUnlockMs, chargedMs, screenOnsMs, alarmEndedMs)) {
                 WakeDecision.CheckPlace -> checkPlaces(trigger)
                 else -> first
@@ -77,8 +83,35 @@ class WakeTriggerManager(
         val nowMs = System.currentTimeMillis()
         val zone = ZoneId.systemDefault()
         enabledTriggers().forEach { trigger ->
-            act(trigger, WakeRules.decideAlarm(trigger, nowMs, zone, packageName), nowMs, zone, WakeRules.lockMs(trigger))
+            val decision = WakeRules.decideAlarm(trigger, nowMs, zone, packageName)
+            act(trigger, decision, nowMs, zone, WakeRules.lockMs(trigger), restartOwn = isRearmed(trigger, nowMs, zone))
         }
+    }
+
+    /** Whether "Going back to sleep" can be offered for [triggerId] right now. */
+    suspend fun canGoBackToSleep(triggerId: Long): Boolean {
+        val trigger = withContext(Dispatchers.IO) { database.wakeTriggerDao().getById(triggerId) } ?: return false
+        return WakeRules.canGoBackToSleep(trigger, System.currentTimeMillis(), ZoneId.systemDefault(), prefs.getString(rearmKey(triggerId), null))
+    }
+
+    /**
+     * "Going back to sleep": [triggerId] locks again, in full, the next time you wake up today (an
+     * alarm dismissed, or an unlock after [WakeRules.BACK_TO_SLEEP_GAP_MS] without one). A lock it's
+     * running keeps running. Once a morning. Returns false if it can't be offered now.
+     */
+    suspend fun goBackToSleep(triggerId: Long): Boolean {
+        if (!canGoBackToSleep(triggerId)) return false
+        val today = WakeRules.day(System.currentTimeMillis(), ZoneId.systemDefault()).toString()
+        prefs.edit { putString(rearmKey(triggerId), today) }
+        withContext(Dispatchers.IO) { database.wakeTriggerDao().setLastFiredDay(triggerId, "") }
+        Log.i(TAG, "Morning lock $triggerId: going back to sleep; locks again at the next wake-up")
+        return true
+    }
+
+    /** Re-armed by "Going back to sleep" today and not fired again since. */
+    private fun isRearmed(trigger: WakeTrigger, nowMs: Long, zone: ZoneId): Boolean {
+        val today = WakeRules.day(nowMs, zone).toString()
+        return prefs.getString(rearmKey(trigger.id), null) == today && trigger.lastFiredDay != today
     }
 
     /**
@@ -171,7 +204,15 @@ class WakeTriggerManager(
         Log.i(TAG, "'${trigger.name}': late wake-up; asking first")
     }
 
-    private suspend fun act(trigger: WakeTrigger, decision: WakeDecision, nowMs: Long, zone: ZoneId, durationMs: Long) {
+    /** @param restartOwn after "Going back to sleep": its own lock, if still running, starts again in full. */
+    private suspend fun act(
+        trigger: WakeTrigger,
+        decision: WakeDecision,
+        nowMs: Long,
+        zone: ZoneId,
+        durationMs: Long,
+        restartOwn: Boolean = false,
+    ) {
         if (decision !is WakeDecision.Lock) {
             Log.i(TAG, "'${trigger.name}': no lock ($decision)")
             return
@@ -182,7 +223,7 @@ class WakeTriggerManager(
             Log.i(TAG, "'${trigger.name}': already done today")
             return
         }
-        val result = startLock(trigger, durationMs)
+        val result = startLock(trigger, durationMs, restartOwn)
         Log.i(TAG, "'${trigger.name}': woke up (${decision.proof}); $result")
         if (result is StartResult.Held) {
             // Held for an edit: today's lock starts when the hold ends, for what's left of it.
@@ -197,14 +238,15 @@ class WakeTriggerManager(
         database.wakeTriggerDao().setLastFiredDay(triggerId, WakeRules.day(nowMs, zone).toString())
     }
 
-    private suspend fun startLock(trigger: WakeTrigger, durationMs: Long): StartResult? {
+    private suspend fun startLock(trigger: WakeTrigger, durationMs: Long, restartOwn: Boolean = false): StartResult? {
         val profileId = trigger.profileId
-        // A stronger or equal lock running means this one is skipped (ADR 0005).
+        // A stronger or equal lock running means this one is skipped (ADR 0005), except its own
+        // lock after "Going back to sleep".
         return if (profileId == null) {
-            lockStarter.startQuick(durationMs = durationMs, label = trigger.name, kind = LockKind.WAKE, ownerId = trigger.id)
+            lockStarter.startQuick(durationMs = durationMs, label = trigger.name, kind = LockKind.WAKE, ownerId = trigger.id, restartOwn = restartOwn)
         } else {
             val profile = withContext(Dispatchers.IO) { database.profileDao().getById(profileId) } ?: return null
-            lockStarter.start(profile, durationMs = durationMs, label = trigger.name, kind = LockKind.WAKE, ownerId = trigger.id)
+            lockStarter.start(profile, durationMs = durationMs, label = trigger.name, kind = LockKind.WAKE, ownerId = trigger.id, restartOwn = restartOwn)
         }
     }
 
@@ -212,6 +254,9 @@ class WakeTriggerManager(
         withContext(Dispatchers.IO) { database.wakeTriggerDao().getEnabled() }
 
     private fun pendingKey(id: Long) = "pending_until_$id"
+
+    /** The day (ISO date) "Going back to sleep" last re-armed this Morning lock. */
+    private fun rearmKey(id: Long) = "back_to_sleep_day_$id"
 
     companion object {
         private const val TAG = "WakeTriggers"

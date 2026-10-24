@@ -263,6 +263,12 @@
     <string name="picker_app_info_unavailable">App info can\'t be opened right now</string>
     <string name="picker_show_time_left">Show the time left (top right)</string>
     <string name="picker_phone_button">Phone button</string>
+    <string name="back_to_sleep_button">🌙 Going back to sleep</string>
+    <string name="back_to_sleep_title">Going back to sleep?</string>
+    <string name="back_to_sleep_text">Morning lock will start again, for its full length, the next time you wake up: when you dismiss its alarm, or at the first unlock after 30 minutes or more without one, before its window ends. A lock that\'s running keeps running. Once a morning.</string>
+    <string name="back_to_sleep_confirm">Going back to sleep</string>
+    <string name="back_to_sleep_done">Sleep well. Morning lock starts again when you wake up.</string>
+    <string name="back_to_sleep_unavailable">Not available now: Morning lock hasn\'t locked today, or was already re-armed.</string>
     <string name="picker_phone_bottom_right">Bottom right</string>
     <string name="picker_phone_bottom_left">Bottom left</string>
     <string name="picker_phone_in_list">In the list</string>

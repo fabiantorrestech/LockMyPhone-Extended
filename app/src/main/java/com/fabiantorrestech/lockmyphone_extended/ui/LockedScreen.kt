@@ -59,6 +59,8 @@ fun LockedScreen(
     nfcGate: Boolean = false,
     refresh: RefreshUi? = null,
     onRefresh: () -> Unit = {},
+    /** A Morning lock that can be re-armed ("Going back to sleep"); null hides the button. */
+    onGoBackToSleep: (() -> Unit)? = null,
 ) {
     // A pending early unlock ends the lock sooner than the scheduled end.
     val endMs = session.effectiveEndMs
@@ -111,6 +113,7 @@ fun LockedScreen(
             if (refresh != null) {
                 RefreshButton(refresh, onRefresh)
             }
+            onGoBackToSleep?.let { BackToSleepButton(it) }
         }
     }
 }

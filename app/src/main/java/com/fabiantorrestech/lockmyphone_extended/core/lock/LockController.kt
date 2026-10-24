@@ -178,6 +178,7 @@ class LockController(
         source: LockSource,
         hiddenPackages: Set<String>,
         options: GlobalLockOptions,
+        restartOwn: Boolean = false,
     ): StartResult {
         if (!relocker.isAdminActive()) return StartResult.AdminNotActive
 
@@ -196,6 +197,7 @@ class LockController(
             source = source,
             hiddenPackages = hiddenPackages,
             options = options,
+            restartOwn = restartOwn,
         )
         val (newState, previous) = when (decision) {
             is StartDecision.Refused -> {

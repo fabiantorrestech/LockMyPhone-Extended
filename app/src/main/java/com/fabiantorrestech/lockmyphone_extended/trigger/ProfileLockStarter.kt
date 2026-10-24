@@ -28,8 +28,16 @@ class ProfileLockStarter(
      * @param durationMs the lock length, or null for the profile's default.
      * @param kind what's starting it, which decides whether it may replace a running lock.
      * @param ownerId the automation or tag starting it, if any.
+     * @param restartOwn replace this automation's own running lock (see LockEngine.start).
      */
-    fun start(profile: LockProfile, durationMs: Long?, label: String, kind: LockKind, ownerId: Long? = null): StartResult {
+    fun start(
+        profile: LockProfile,
+        durationMs: Long?,
+        label: String,
+        kind: LockKind,
+        ownerId: Long? = null,
+        restartOwn: Boolean = false,
+    ): StartResult {
         heldResult(kind, ownerId)?.let { return it }
         return lockController.startLock(
             durationMs = durationMs ?: (profile.defaultDurationSec * 1_000),
@@ -44,6 +52,7 @@ class ProfileLockStarter(
             source = LockSource(kind, profile.id.toString(), ownerId, profile.name),
             hiddenPackages = profile.hiddenPackages,
             options = globalOptions(),
+            restartOwn = restartOwn,
         )
     }
 
@@ -55,8 +64,9 @@ class ProfileLockStarter(
      * @param durationMs the lock length, or null for Quick lock's last-used length.
      * @param kind what's starting it, which decides whether it may replace a running lock.
      * @param ownerId the automation or tag starting it, if any.
+     * @param restartOwn replace this automation's own running lock (see LockEngine.start).
      */
-    fun startQuick(durationMs: Long?, label: String, kind: LockKind, ownerId: Long? = null): StartResult {
+    fun startQuick(durationMs: Long?, label: String, kind: LockKind, ownerId: Long? = null, restartOwn: Boolean = false): StartResult {
         heldResult(kind, ownerId)?.let { return it }
         val settings = settingsStore()
         val bypass = settings.bypassDefaults.value
@@ -73,6 +83,7 @@ class ProfileLockStarter(
             source = LockSource(kind, QUICK_LOCK_ID, ownerId),
             hiddenPackages = settings.quickHiddenPackages.value,
             options = globalOptions(),
+            restartOwn = restartOwn,
         )
     }
 

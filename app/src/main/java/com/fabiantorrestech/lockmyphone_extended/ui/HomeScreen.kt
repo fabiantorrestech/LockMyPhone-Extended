@@ -204,6 +204,9 @@ fun HomeScreen(
     popupAppCount: Int,
     onEditPopupApps: () -> Unit,
     relocks: RelockUi,
+    /** Morning locks that can offer "Going back to sleep" now. */
+    backToSleepIds: Set<Long>,
+    onGoBackToSleep: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val pro = uiMode == UiMode.PRO
@@ -275,7 +278,7 @@ fun HomeScreen(
                                 MorningLockCard(
                                     wakeTriggers, profiles, locations, onEditWake, granted,
                                     toggleActions.onToggleWake, { waitText(AutomationKey(LockKind.WAKE, it)) },
-                                    sleepPlaces, onEditLocation,
+                                    sleepPlaces, onEditLocation, backToSleepIds, onGoBackToSleep,
                                 )
                                 SchedulesCard(
                                     schedules, profiles, onEditSchedule, reorderActions.onReorderSchedules, clashes.schedules,
@@ -802,6 +805,8 @@ private fun MorningLockCard(
     waitText: (Long) -> String?,
     sleepPlaces: List<LocationTrigger>,
     onEditPlace: (LocationTrigger) -> Unit,
+    backToSleepIds: Set<Long>,
+    onGoBackToSleep: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -827,6 +832,7 @@ private fun MorningLockCard(
                     trailing = { Switch(checked = trigger.enabled, onCheckedChange = { onToggle(trigger, it) }) },
                     dimmed = !trigger.enabled,
                 )
+                if (trigger.id in backToSleepIds) BackToSleepButton { onGoBackToSleep(trigger.id) }
             }
             if (sleepPlaces.isNotEmpty()) {
                 Text(stringResource(R.string.wake_places), style = MaterialTheme.typography.titleSmall)

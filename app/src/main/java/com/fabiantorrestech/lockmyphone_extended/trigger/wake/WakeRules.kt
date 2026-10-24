@@ -37,7 +37,16 @@ enum class WakeSkip {
 }
 
 /** What confirmed you were sleeping. */
-enum class SleepProof { CHARGING, PLACE_WIFI, PLACE_GPS, NO_CHECKS, ALARM }
+enum class SleepProof {
+    CHARGING,
+    PLACE_WIFI,
+    PLACE_GPS,
+    NO_CHECKS,
+    ALARM,
+
+    /** "Going back to sleep" re-armed it, and the phone then went unused for a while. */
+    BACK_TO_SLEEP,
+}
 
 /** The outcome of one unlock or alarm for one Morning lock. */
 sealed interface WakeDecision {
@@ -103,6 +112,34 @@ object WakeRules {
 
     /** A lock shorter than this isn't worth starting. */
     const val MIN_LOCK_MS = 60_000L
+
+    /**
+     * After "Going back to sleep", this long without an unlock counts as having slept again (a nap
+     * of an hour or two never meets the usual minimum sleep).
+     */
+    const val BACK_TO_SLEEP_GAP_MS = 30 * 60_000L
+
+    /**
+     * Whether "Going back to sleep" can be offered: it locked today, inside its window, and hasn't
+     * been re-armed today already (once a morning).
+     *
+     * @param rearmedDay the day (ISO date) it was last re-armed, or null.
+     */
+    fun canGoBackToSleep(trigger: WakeTrigger, nowMs: Long, zone: ZoneId, rearmedDay: String?): Boolean {
+        val today = day(nowMs, zone).toString()
+        return trigger.enabled && trigger.lastFiredDay == today && rearmedDay != today && inWindow(trigger, nowMs, zone)
+    }
+
+    /**
+     * An unlock after "Going back to sleep" re-armed it today: [BACK_TO_SLEEP_GAP_MS] without an
+     * unlock is proof enough (no charging or place checks), and the lock runs its full length.
+     */
+    fun decideRearmedUnlock(trigger: WakeTrigger, nowMs: Long, zone: ZoneId, previousUnlockMs: Long?): WakeDecision {
+        dayCheck(trigger, nowMs, zone)?.let { return WakeDecision.Skip(it) }
+        if (previousUnlockMs == null) return WakeDecision.Skip(WakeSkip.NO_HISTORY)
+        if (nowMs - previousUnlockMs < BACK_TO_SLEEP_GAP_MS) return WakeDecision.Skip(WakeSkip.SHORT_GAP)
+        return WakeDecision.Lock(SleepProof.BACK_TO_SLEEP)
+    }
 
     /** The checks every moment shares: on, today, not done yet, inside the window. */
     private fun dayCheck(trigger: WakeTrigger, nowMs: Long, zone: ZoneId): WakeSkip? {

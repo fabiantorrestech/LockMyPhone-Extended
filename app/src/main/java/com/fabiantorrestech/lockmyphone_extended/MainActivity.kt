@@ -60,6 +60,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.enforce.LockAccessibilityS
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockState
 import com.fabiantorrestech.lockmyphone_extended.core.lock.StartResult
 import com.fabiantorrestech.lockmyphone_extended.core.lock.LockKind
+import com.fabiantorrestech.lockmyphone_extended.ui.BackToSleepDialog
 import com.fabiantorrestech.lockmyphone_extended.ui.formatAlreadyLocked
 import com.fabiantorrestech.lockmyphone_extended.ui.formatClash
 import com.fabiantorrestech.lockmyphone_extended.ui.formatCalendarClash
@@ -214,6 +215,12 @@ class MainActivity : ComponentActivity() {
     /** The setup assistant was opened again from Settings. */
     private val assistantOpen = mutableStateOf(false)
 
+    /** Morning locks that can offer "Going back to sleep" right now ([refreshBackToSleep]). */
+    private val backToSleepIds = mutableStateOf(emptySet<Long>())
+
+    /** The Morning lock whose "Going back to sleep?" question is showing, if any. */
+    private val askBackToSleep = mutableStateOf<Long?>(null)
+
     /** A tab requested from outside, e.g. by tapping an alarm-trigger warning notification. */
     private val requestedTab = mutableStateOf<HomeTab?>(null)
 
@@ -312,6 +319,18 @@ class MainActivity : ComponentActivity() {
                 CompositionLocalProvider(LocalUiMode provides uiMode) {
                     val onboardingDone by container.settingsStore.onboardingDone.collectAsState()
 
+                    // A lock starting or ending changes which Morning locks can offer "Going back to sleep".
+                    LaunchedEffect(lockState) { refreshBackToSleep() }
+                    askBackToSleep.value?.let { id ->
+                        BackToSleepDialog(
+                            onConfirm = {
+                                askBackToSleep.value = null
+                                goBackToSleep(id)
+                            },
+                            onDismiss = { askBackToSleep.value = null },
+                        )
+                    }
+
                     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                         val contentModifier = Modifier.padding(innerPadding)
                         val locked = lockState
@@ -337,6 +356,10 @@ class MainActivity : ComponentActivity() {
                                         null
                                     },
                                     onRefresh = { container.appScope.launch { container.placeRefresher.refresh() } },
+                                    onGoBackToSleep = locked.session.source
+                                        .takeIf { it.kind == LockKind.WAKE }?.ownerId
+                                        ?.takeIf { it in backToSleepIds.value }
+                                        ?.let { id -> { askBackToSleep.value = id } },
                                 )
                             }
                             !onboardingDone || assistantOpen.value -> SetupAssistantScreen(
@@ -919,6 +942,8 @@ class MainActivity : ComponentActivity() {
                 onOpenAssistant = { assistantOpen.value = true },
                 popupAppCount = popupPackages.size,
                 onEditPopupApps = { screen = Screen.POPUP_APPS },
+                backToSleepIds = backToSleepIds.value,
+                onGoBackToSleep = { askBackToSleep.value = it },
                 relocks = RelockUi(
                     entries = container.lockController.relockLog.entries.collectAsState().value,
                     popupPackages = popupPackages,
@@ -1748,6 +1773,27 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         refreshSetupStatus()
         applyNfcReader()
+        refreshBackToSleep()
+    }
+
+    /** Which Morning locks can offer "Going back to sleep" now: locked today, not re-armed yet. */
+    private fun refreshBackToSleep() {
+        lifecycleScope.launch {
+            val triggers = withContext(Dispatchers.IO) { container.database.wakeTriggerDao().getEnabled() }
+            backToSleepIds.value = triggers.map { it.id }.filter { container.wakeTriggerManager.canGoBackToSleep(it) }.toSet()
+        }
+    }
+
+    private fun goBackToSleep(triggerId: Long) {
+        lifecycleScope.launch {
+            val done = container.wakeTriggerManager.goBackToSleep(triggerId)
+            Toast.makeText(
+                this@MainActivity,
+                if (done) R.string.back_to_sleep_done else R.string.back_to_sleep_unavailable,
+                Toast.LENGTH_LONG,
+            ).show()
+            refreshBackToSleep()
+        }
     }
 
     override fun onPause() {
