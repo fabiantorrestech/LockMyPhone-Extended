@@ -23,7 +23,9 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.WbTwilight
 import androidx.compose.material3.InputChip
@@ -75,7 +77,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -98,6 +100,7 @@ import com.fabiantorrestech.lockmyphone_extended.core.dnd.DndLevel
 import com.fabiantorrestech.lockmyphone_extended.core.lock.UnlockResumeMode
 import com.fabiantorrestech.lockmyphone_extended.data.BypassDefaults
 import com.fabiantorrestech.lockmyphone_extended.data.ThemeMode
+import com.fabiantorrestech.lockmyphone_extended.data.UiMode
 import com.fabiantorrestech.lockmyphone_extended.data.db.AlarmTrigger
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockProfile
 import com.fabiantorrestech.lockmyphone_extended.data.db.LockSchedule
@@ -111,14 +114,13 @@ import com.fabiantorrestech.lockmyphone_extended.trigger.location.BeaconTiming
 import kotlinx.coroutines.delay
 
 /** The home screen's tabs, in order. */
-enum class HomeTab { QUICK_LOCK, PROFILES, AUTOMATIONS, SETTINGS }
+enum class HomeTab { LOCK, AUTOMATIONS, SETTINGS }
 
 /**
- * The main screen while no lock is active: the app title, then four tabs:
- * - **Quick lock:** start a lock without a profile.
- * - **Profiles:** saved lock profiles.
- * - **Automations:** weekly schedules and alarm triggers.
- * - **Settings:** setup, lock defaults, intent API, device type, appearance and diagnostics.
+ * The main screen while no lock is active: the app title, then three tabs:
+ * - **Lock:** Quick lock and your profiles, each ready to start.
+ * - **Automations:** schedules, Morning lock, alarms, places, calendar and NFC tags.
+ * - **Settings:** Simple / Pro, setup, lock defaults, appearance; Pro adds every fine-grained control.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -189,11 +191,17 @@ fun HomeScreen(
     onHomeActionChange: (HomeAction) -> Unit,
     unlockIntoAllowedApp: Boolean,
     onUnlockIntoAllowedAppChange: (Boolean) -> Unit,
+    uiMode: UiMode,
+    onUiModeChange: (UiMode) -> Unit,
+    onOpenAssistant: () -> Unit,
+    popupAppCount: Int,
+    onEditPopupApps: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val pro = uiMode == UiMode.PRO
     Column(modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text(stringResource(R.string.home_title)) },
+        CenterAlignedTopAppBar(
+            title = { Text(stringResource(R.string.home_title), style = MaterialTheme.typography.titleLarge) },
             // The activity's Scaffold already pads for the status bar.
             windowInsets = WindowInsets(0),
         )
@@ -209,23 +217,18 @@ fun HomeScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 when (selectedTab) {
-                    HomeTab.QUICK_LOCK -> {
-                        if (!setup.adminActive || !setup.accessibilityEnabled) {
-                            SetupBanner(onOpenSettings = { onTabChange(HomeTab.SETTINGS) })
-                        }
-                        QuickLockSection(setup.adminActive, quickLock, presetsSec, nfcTags, startActions)
-                    }
-                    HomeTab.PROFILES -> {
-                        if (!setup.adminActive || !setup.accessibilityEnabled) {
-                            SetupBanner(onOpenSettings = { onTabChange(HomeTab.SETTINGS) })
-                        }
-                        ProfilesCard(
-                            profiles, setup.accessibilityEnabled, setup.adminActive, onEditProfile,
-                            startActions.onStartProfile, reorderActions.onReorderProfiles, granted,
-                        )
-                        // Room below the last profile, so the + button never covers its Start button.
-                        Spacer(Modifier.height(FAB_CLEARANCE))
-                    }
+                    HomeTab.LOCK -> LockTab(
+                        profiles = profiles,
+                        adminActive = setup.adminActive,
+                        accessibilityEnabled = setup.accessibilityEnabled,
+                        granted = granted,
+                        quickLock = quickLock,
+                        presetsSec = presetsSec,
+                        onOpenSettings = { onTabChange(HomeTab.SETTINGS) },
+                        onEditProfile = onEditProfile,
+                        onReorderProfiles = reorderActions.onReorderProfiles,
+                        actions = startActions,
+                    )
                     HomeTab.AUTOMATIONS -> {
                         if (alarmTriggers.isNotEmpty() && !setup.notificationAccessGranted) {
                             WarningBanner(
@@ -259,30 +262,39 @@ fun HomeScreen(
                             otherPlaces, profiles, onEditLocation, reorderActions.onReorderLocations, granted, clashes.places,
                             toggleActions.onToggleLocation, { waitText(AutomationKey(LockKind.PLACE, it)) },
                         )
-                        CalendarCard(
-                            calendarTriggers, profiles, onEditCalendar, reorderActions.onReorderCalendars, granted, clashes.calendars,
-                            toggleActions.onToggleCalendar, { waitText(AutomationKey(LockKind.CALENDAR, it)) },
-                        )
-                        NfcTagsCard(
-                            nfcTags, profiles, setup.hasNfc, onEditNfcTag, reorderActions.onReorderNfcTags, granted,
-                            toggleActions.onToggleNfcTag, { waitText(AutomationKey(LockKind.NFC, it)) },
-                        )
+                        // Simple mode lists calendar triggers and NFC tags only once you have some.
+                        if (pro || calendarTriggers.isNotEmpty()) {
+                            CalendarCard(
+                                calendarTriggers, profiles, onEditCalendar, reorderActions.onReorderCalendars, granted, clashes.calendars,
+                                toggleActions.onToggleCalendar, { waitText(AutomationKey(LockKind.CALENDAR, it)) },
+                            )
+                        }
+                        if (pro || nfcTags.isNotEmpty()) {
+                            NfcTagsCard(
+                                nfcTags, profiles, setup.hasNfc, onEditNfcTag, reorderActions.onReorderNfcTags, granted,
+                                toggleActions.onToggleNfcTag, { waitText(AutomationKey(LockKind.NFC, it)) },
+                            )
+                        }
+                        if (!pro && (calendarTriggers.isEmpty() || (nfcTags.isEmpty() && setup.hasNfc))) {
+                            MoreKindsCard(
+                                showCalendar = calendarTriggers.isEmpty(),
+                                showNfc = nfcTags.isEmpty() && setup.hasNfc,
+                                onNewCalendar = { onEditCalendar(null) },
+                                onNewNfcTag = { onEditNfcTag(null) },
+                            )
+                        }
                     }
                     HomeTab.SETTINGS -> {
+                        ModeCard(uiMode, onUiModeChange)
+
+                        SettingsGroupHeader(stringResource(R.string.settings_group_setup))
                         SetupChecklist(setup, setupActions)
+                        AssistantCard(onOpenAssistant)
                         PermissionsCard(onOpenPermissions)
-                        LockDefaultsCard(onOpenLockDefaults)
                         BackupCard(backup, backupActions)
-                        LengthPresetsCard(presetsSec, onPresetsChange)
-                        AutomationCooldownCard(automationCooldown, onAutomationCooldownChange)
-                        AlarmDayStartCard(alarmDayStartMinutes, onAlarmDayStartChange)
-                        LocationEngineCard(locationEngine, playServicesAvailable, onLocationEngineChange)
-                        BeaconTimingCard(beaconPreset, beaconCustomTiming, onBeaconTimingChange)
-                        BeaconModeCard(beaconMode, onBeaconModeChange, setupActions.onAllowBackground)
-                        CalendarDefaultsCard(calendarSkipDeclined, calendarSkipFree, onCalendarDefaultsChange)
-                        if (setup.hasNfc) NfcGateCard(nfcGateSeconds, onNfcGateSecondsChange)
-                        IntentApiCard(intentApi, intentApiActions)
-                        DeviceCard(deviceProfileName, onChangeDevice)
+
+                        SettingsGroupHeader(stringResource(R.string.settings_group_locks))
+                        LockDefaultsCard(onOpenLockDefaults)
                         DuringLockCard(
                             assistantPopupAllowed,
                             onAssistantPopupChange,
@@ -290,20 +302,39 @@ fun HomeScreen(
                             onHomeActionChange,
                             unlockIntoAllowedApp,
                             onUnlockIntoAllowedAppChange,
+                            popupAppCount = popupAppCount.takeIf { pro },
+                            onEditPopupApps = onEditPopupApps,
                         )
+                        if (pro) LengthPresetsCard(presetsSec, onPresetsChange)
+
+                        SettingsGroupHeader(stringResource(R.string.appearance_title))
                         AppearanceCard(themeMode, onThemeModeChange, showPickerIcons, onShowPickerIconsChange, pickerAppearance)
-                        OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) {
-                            Text(stringResource(R.string.diag_open))
+
+                        if (pro) {
+                            SettingsGroupHeader(stringResource(R.string.tab_automations))
+                            AutomationCooldownCard(automationCooldown, onAutomationCooldownChange)
+                            AlarmDayStartCard(alarmDayStartMinutes, onAlarmDayStartChange)
+                            LocationEngineCard(locationEngine, playServicesAvailable, onLocationEngineChange)
+                            BeaconTimingCard(beaconPreset, beaconCustomTiming, onBeaconTimingChange)
+                            CalendarDefaultsCard(calendarSkipDeclined, calendarSkipFree, onCalendarDefaultsChange)
+                            if (setup.hasNfc) NfcGateCard(nfcGateSeconds, onNfcGateSecondsChange)
+
+                            SettingsGroupHeader(stringResource(R.string.settings_group_advanced))
+                            BeaconModeCard(beaconMode, onBeaconModeChange, setupActions.onAllowBackground)
+                            IntentApiCard(intentApi, intentApiActions)
+                            DeviceCard(deviceProfileName, onChangeDevice)
+                            OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) {
+                                Text(stringResource(R.string.diag_open))
+                            }
+                        } else {
+                            Text(
+                                stringResource(R.string.mode_more_in_pro),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 4.dp),
+                            )
                         }
                     }
-                }
-            }
-            if (selectedTab == HomeTab.PROFILES) {
-                FloatingActionButton(
-                    onClick = { onEditProfile(null) },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                ) {
-                    Icon(painterResource(R.drawable.ic_add), contentDescription = stringResource(R.string.profile_new))
                 }
             }
         }
@@ -323,17 +354,97 @@ fun HomeScreen(
 }
 
 private fun HomeTab.labelRes(): Int = when (this) {
-    HomeTab.QUICK_LOCK -> R.string.tab_quick_lock
-    HomeTab.PROFILES -> R.string.tab_profiles
+    HomeTab.LOCK -> R.string.tab_lock
     HomeTab.AUTOMATIONS -> R.string.tab_automations
     HomeTab.SETTINGS -> R.string.tab_settings
 }
 
 private fun HomeTab.icon(): ImageVector = when (this) {
-    HomeTab.QUICK_LOCK -> Icons.Filled.Bolt
-    HomeTab.PROFILES -> Icons.AutoMirrored.Filled.List
+    HomeTab.LOCK -> Icons.Filled.Lock
     HomeTab.AUTOMATIONS -> Icons.Filled.Schedule
     HomeTab.SETTINGS -> Icons.Filled.Settings
+}
+
+/** Simple or Pro: the first card in Settings, in both modes. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModeCard(mode: UiMode, onChange: (UiMode) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(stringResource(R.string.mode_title), style = MaterialTheme.typography.titleMedium)
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                UiMode.entries.forEachIndexed { index, option ->
+                    SegmentedButton(
+                        selected = mode == option,
+                        onClick = { onChange(option) },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = UiMode.entries.size),
+                    ) {
+                        Text(stringResource(if (option == UiMode.SIMPLE) R.string.mode_simple else R.string.mode_pro))
+                    }
+                }
+            }
+            Text(
+                stringResource(if (mode == UiMode.SIMPLE) R.string.mode_simple_hint else R.string.mode_pro_hint),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+/** A group label between Settings cards. */
+@Composable
+private fun SettingsGroupHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+    )
+}
+
+/** Settings → Set-up assistant: run it again to add starter profiles. */
+@Composable
+private fun AssistantCard(onOpen: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        SettingsRow(
+            icon = Icons.Filled.AutoAwesome,
+            title = stringResource(R.string.assistant_card_title),
+            summary = stringResource(R.string.assistant_card_hint),
+            onClick = onOpen,
+        )
+    }
+}
+
+/** Simple mode: the automation kinds not shown yet, one tap to add one. */
+@Composable
+private fun MoreKindsCard(showCalendar: Boolean, showNfc: Boolean, onNewCalendar: () -> Unit, onNewNfcTag: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.more_kinds_title), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.more_kinds_hint), style = MaterialTheme.typography.bodySmall)
+            if (showCalendar) {
+                OutlinedButton(onClick = onNewCalendar, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.EventAvailable, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.calendar_new))
+                }
+            }
+            if (showNfc) {
+                OutlinedButton(onClick = onNewNfcTag, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.Nfc, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.nfc_tag_new))
+                }
+            }
+        }
+    }
 }
 
 /** Location triggers, with icons and drag to reorder. */
@@ -922,9 +1033,6 @@ private fun AutomationCooldownCard(enabled: Boolean, onChange: (Boolean) -> Unit
 /** How faded a list row is when it isn't ready yet, e.g. an NFC tag that isn't written. */
 private const val DIMMED_ALPHA = 0.5f
 
-/** Space a FloatingActionButton (56 dp + 16 dp margin) needs at the end of a scrolling list. */
-private val FAB_CLEARANCE = 72.dp
-
 /** One alarm trigger that may need re-linking. */
 data class AlarmProblemUi(
     val triggerId: Long,
@@ -980,7 +1088,7 @@ private fun WarningBanner(text: String, primary: Pair<String, () -> Unit>) {
 
 /** Shown on the Locks tab while something essential is missing. */
 @Composable
-private fun SetupBanner(onOpenSettings: () -> Unit) {
+internal fun SetupBanner(onOpenSettings: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
@@ -1143,6 +1251,9 @@ private fun DuringLockCard(
     onHomeActionChange: (HomeAction) -> Unit,
     unlockIntoAllowedApp: Boolean,
     onUnlockIntoAllowedAppChange: (Boolean) -> Unit,
+    /** How many apps may show popups during a lock; null hides the row (Simple mode). */
+    popupAppCount: Int?,
+    onEditPopupApps: () -> Unit,
 ) {
     var choosingHome by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -1172,6 +1283,18 @@ private fun DuringLockCard(
                 checked = unlockIntoAllowedApp,
                 onCheckedChange = onUnlockIntoAllowedAppChange,
             )
+            if (popupAppCount != null) {
+                SettingsRow(
+                    icon = Icons.Filled.Layers,
+                    title = stringResource(R.string.popup_apps_title),
+                    summary = if (popupAppCount == 0) {
+                        stringResource(R.string.popup_apps_none)
+                    } else {
+                        LocalContext.current.resources.getQuantityString(R.plurals.apps_count, popupAppCount, popupAppCount)
+                    } + "\n" + stringResource(R.string.popup_apps_hint),
+                    onClick = onEditPopupApps,
+                )
+            }
         }
     }
     if (choosingHome) {
@@ -1247,67 +1370,6 @@ private fun DeviceCard(profileName: String, onChange: () -> Unit) {
                 Text(stringResource(R.string.device_change))
             }
         }
-    }
-}
-
-/** Saved profiles: tap a row to edit it, ▶ to start a lock with it. */
-@Composable
-private fun ProfilesCard(
-    profiles: List<LockProfile>,
-    accessibilityEnabled: Boolean,
-    adminActive: Boolean,
-    onEdit: (LockProfile?) -> Unit,
-    onStart: (LockProfile, Long) -> Unit,
-    onReorder: (List<LockProfile>) -> Unit,
-    granted: Set<AppPermission>,
-) {
-    val context = LocalContext.current
-    var starting by remember { mutableStateOf<LockProfile?>(null) }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.profiles_title), style = MaterialTheme.typography.titleMedium)
-            if (!accessibilityEnabled) {
-                Text(stringResource(R.string.allowed_needs_accessibility), style = MaterialTheme.typography.bodySmall)
-            }
-            if (profiles.size > 1) {
-                Text(stringResource(R.string.reorder_hint), style = MaterialTheme.typography.bodySmall)
-            }
-            ReorderableColumn(profiles, key = { it.id }, onReorder = onReorder) { profile, _ ->
-                ListRow(
-                    title = profile.name,
-                    // Without DND access the lock still works, just without DND / grayscale.
-                    subtitle = withPauseNote(
-                        formatProfileSummary(context, profile),
-                        pauseNote(context, PermissionNeeds.check(PermissionNeeds.forProfile(profile), granted, partial = true)),
-                    ),
-                    onClick = { onEdit(profile) },
-                    leading = { ProfileIcon(profile.icon, profile.name) },
-                    trailing = {
-                        FilledTonalIconButton(
-                            onClick = { starting = profile },
-                            enabled = adminActive,
-                            modifier = Modifier.size(48.dp),
-                        ) {
-                            Icon(
-                                Icons.Filled.PlayArrow,
-                                contentDescription = stringResource(R.string.profile_start_named, profile.name),
-                                modifier = Modifier.size(30.dp),
-                            )
-                        }
-                    },
-                )
-            }
-        }
-    }
-    starting?.let { profile ->
-        StartProfileDialog(
-            profile = profile,
-            onStart = { durationMs ->
-                starting = null
-                onStart(profile, durationMs)
-            },
-            onDismiss = { starting = null },
-        )
     }
 }
 
@@ -1415,6 +1477,8 @@ private fun LockDefaultsCard(onOpen: () -> Unit) {
 /** What the Quick lock tab and the profile Start buttons can do. */
 class StartLockActions(
     val onEditQuickApps: () -> Unit,
+    /** Opens Quick lock's settings screen. */
+    val onOpenQuickOptions: () -> Unit,
     /** Saves Quick lock's settings as they're changed, so they're prefilled next time. */
     val onQuickSettingsChange: (LockSettings) -> Unit,
     /** Copies the Lock defaults into Quick lock. */
@@ -1423,81 +1487,6 @@ class StartLockActions(
     val onStartQuick: () -> Unit,
     val onStartProfile: (profile: LockProfile, durationMs: Long) -> Unit,
 )
-
-/**
- * Quick lock: set everything right here (it's all remembered) and lock. ↻ copies the Lock
- * defaults back in.
- */
-@Composable
-private fun QuickLockSection(
-    enabled: Boolean,
-    quickLock: LockSettings,
-    presetsSec: List<Long>,
-    nfcTags: List<NfcTag>,
-    actions: StartLockActions,
-) {
-    var showConfirm by remember { mutableStateOf(false) }
-    var showResetConfirm by remember { mutableStateOf(false) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        // Start sits in the header, so it's reachable without scrolling past the settings.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.quick_lock), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            IconButton(onClick = { showResetConfirm = true }) {
-                Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.quick_reset_defaults))
-            }
-            Button(
-                onClick = { showConfirm = true },
-                enabled = enabled,
-                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
-            ) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(28.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.start_button), style = MaterialTheme.typography.titleMedium)
-            }
-        }
-        if (!enabled) {
-            Text(stringResource(R.string.start_needs_admin), style = MaterialTheme.typography.bodySmall)
-        }
-        LockSettingsSections(
-            settings = quickLock,
-            presetsSec = presetsSec,
-            nfcTags = nfcTags,
-            lockId = QUICK_LOCK_ID,
-            lengthTitle = stringResource(R.string.lock_length),
-            onChange = actions.onQuickSettingsChange,
-            onEditAllowedApps = actions.onEditQuickApps,
-        )
-    }
-
-    if (showConfirm) {
-        ConfirmLockDialog(
-            durationMs = quickLock.durationSec * 1_000,
-            bypassWaitMinutes = quickLock.bypassWaitMinutes.takeIf { quickLock.bypassEnabled },
-            onConfirm = {
-                showConfirm = false
-                actions.onStartQuick()
-            },
-            onDismiss = { showConfirm = false },
-        )
-    }
-    if (showResetConfirm) {
-        AlertDialog(
-            onDismissRequest = { showResetConfirm = false },
-            title = { Text(stringResource(R.string.quick_reset_confirm_title)) },
-            text = { Text(stringResource(R.string.quick_reset_confirm_body)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showResetConfirm = false
-                    actions.onResetQuickToDefaults()
-                }) { Text(stringResource(R.string.quick_reset_defaults)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showResetConfirm = false }) { Text(stringResource(android.R.string.cancel)) }
-            },
-        )
-    }
-}
 
 /** Settings → Length presets: 0 to [MAX_DURATION_PRESETS] one-tap lock lengths. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -1593,7 +1582,7 @@ fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Uni
 
 /** ▶ Start from a profile: confirm, then lock for the profile's own length. */
 @Composable
-private fun StartProfileDialog(
+internal fun StartProfileDialog(
     profile: LockProfile,
     onStart: (durationMs: Long) -> Unit,
     onDismiss: () -> Unit,
@@ -1622,7 +1611,7 @@ private fun StartProfileDialog(
 
 /** @param bypassWaitMinutes the early-unlock wait, or null if early unlock is off. */
 @Composable
-private fun ConfirmLockDialog(
+internal fun ConfirmLockDialog(
     durationMs: Long,
     bypassWaitMinutes: Int?,
     onConfirm: () -> Unit,

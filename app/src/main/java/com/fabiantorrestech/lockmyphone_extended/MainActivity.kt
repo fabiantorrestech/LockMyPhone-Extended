@@ -159,6 +159,9 @@ import com.fabiantorrestech.lockmyphone_extended.ui.SetupStatus
 import com.fabiantorrestech.lockmyphone_extended.ui.StartLockActions
 import com.fabiantorrestech.lockmyphone_extended.ui.formatDurationLabel
 import com.fabiantorrestech.lockmyphone_extended.ui.theme.LockMyPhoneExtendedTheme
+import com.fabiantorrestech.lockmyphone_extended.ui.LocalUiMode
+import com.fabiantorrestech.lockmyphone_extended.ui.QuickLockOptionsScreen
+import androidx.compose.runtime.CompositionLocalProvider
 import kotlinx.coroutines.launch
 
 /**
@@ -179,7 +182,7 @@ private const val TEST_LOCK_MS = 30_000L
 /** The screens reachable while no lock is active. */
 private enum class Screen {
     HOME, DEVICE, DIAGNOSTICS, PROFILE, PROFILE_APPS, SCHEDULE, QUICK_APPS, ALARM_TRIGGER, ALARM_APP, DEFAULTS, DEFAULT_APPS,
-    LOCATION, CALENDAR, PERMISSIONS, NFC_TAG, WAKE,
+    LOCATION, CALENDAR, PERMISSIONS, NFC_TAG, WAKE, QUICK_OPTIONS, POPUP_APPS,
 }
 
 // Play Services pulls in an old androidx.fragment, which trips this lint check. This activity is a
@@ -203,6 +206,9 @@ class MainActivity : ComponentActivity() {
             alarmTriggersExist = false,
         )
     )
+
+    /** The setup assistant was opened again from Settings. */
+    private val assistantOpen = mutableStateOf(false)
 
     /** A tab requested from outside, e.g. by tapping an alarm-trigger warning notification. */
     private val requestedTab = mutableStateOf<HomeTab?>(null)
@@ -297,57 +303,63 @@ class MainActivity : ComponentActivity() {
             val lockState by container.lockController.state.collectAsState()
             // The lock countdown is always OLED black, like the allowed-apps picker.
             LockMyPhoneExtendedTheme(if (lockState is LockState.Locked) ThemeMode.OLED else themeMode) {
-                val onboardingDone by container.settingsStore.onboardingDone.collectAsState()
+                val uiMode by container.settingsStore.uiMode.collectAsState()
+                CompositionLocalProvider(LocalUiMode provides uiMode) {
+                    val onboardingDone by container.settingsStore.onboardingDone.collectAsState()
 
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    val contentModifier = Modifier.padding(innerPadding)
-                    val locked = lockState
-                    when {
-                        locked is LockState.Locked -> {
-                            val gateOpen by container.lockController.gateActive.collectAsState()
-                            if (gateOpen) NfcReader(::onGateTag)
-                            val pickerStyle by container.settingsStore.pickerStyle.collectAsState()
-                            HideStatusBar(pickerStyle.hideStatusBar)
-                            LockedScreen(
-                                session = locked.session,
-                                pickerStyle = pickerStyle,
-                                pickerFont = rememberFontFamily(pickerStyle.font, container.fontLibrary),
-                                passButtonsEnabled = LockAccessibilityService.isRunning,
-                                onOpenAllowedApps = { startActivity(PassActivity.pickerIntent(this)) },
-                                onOpenPhone = { startActivity(PassActivity.dialIntent(this)) },
-                                modifier = contentModifier,
-                                choiceDeadlineMs = container.lockController.choiceDeadlineMs.collectAsState().value,
-                                nfcGate = gateOpen,
-                                refresh = if (container.notifications.isRefreshable(locked.session)) {
-                                    container.placeRefresher.state.collectAsState().value.forLock(locked.session.startedAtMs)
-                                } else {
-                                    null
-                                },
-                                onRefresh = { container.appScope.launch { container.placeRefresher.refresh() } },
-                            )
-                        }
-                        !onboardingDone -> OnboardingScreen(
-                            deviceProfilePicker = { DeviceProfileSection() },
-                            setupChecklist = { SetupChecklist(setupStatus.value, setupActions) },
-                            onFinish = { container.settingsStore.setOnboardingDone(true) },
-                            modifier = contentModifier,
-                        )
-                        else -> IdleContent(contentModifier)
-                    }
-                }
-                tagChooser.value?.let { choose ->
-                    LockChooserDialog(
-                        tagName = choose.tag.name,
-                        choices = choose.choices,
-                        onPick = { choice ->
-                            tagChooser.value = null
-                            container.appScope.launch {
-                                val message = container.nfcTagHandler.startLock(choose.tag, choice.lockId)
-                                Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
+                    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                        val contentModifier = Modifier.padding(innerPadding)
+                        val locked = lockState
+                        when {
+                            locked is LockState.Locked -> {
+                                val gateOpen by container.lockController.gateActive.collectAsState()
+                                if (gateOpen) NfcReader(::onGateTag)
+                                val pickerStyle by container.settingsStore.pickerStyle.collectAsState()
+                                HideStatusBar(pickerStyle.hideStatusBar)
+                                LockedScreen(
+                                    session = locked.session,
+                                    pickerStyle = pickerStyle,
+                                    pickerFont = rememberFontFamily(pickerStyle.font, container.fontLibrary),
+                                    passButtonsEnabled = LockAccessibilityService.isRunning,
+                                    onOpenAllowedApps = { startActivity(PassActivity.pickerIntent(this)) },
+                                    onOpenPhone = { startActivity(PassActivity.dialIntent(this)) },
+                                    modifier = contentModifier,
+                                    choiceDeadlineMs = container.lockController.choiceDeadlineMs.collectAsState().value,
+                                    nfcGate = gateOpen,
+                                    refresh = if (container.notifications.isRefreshable(locked.session)) {
+                                        container.placeRefresher.state.collectAsState().value.forLock(locked.session.startedAtMs)
+                                    } else {
+                                        null
+                                    },
+                                    onRefresh = { container.appScope.launch { container.placeRefresher.refresh() } },
+                                )
                             }
-                        },
-                        onDismiss = { tagChooser.value = null },
-                    )
+                            !onboardingDone || assistantOpen.value -> OnboardingScreen(
+                                deviceProfilePicker = { DeviceProfileSection() },
+                                setupChecklist = { SetupChecklist(setupStatus.value, setupActions) },
+                                onFinish = {
+                                    container.settingsStore.setOnboardingDone(true)
+                                    assistantOpen.value = false
+                                },
+                                modifier = contentModifier,
+                            )
+                            else -> IdleContent(contentModifier)
+                        }
+                    }
+                    tagChooser.value?.let { choose ->
+                        LockChooserDialog(
+                            tagName = choose.tag.name,
+                            choices = choose.choices,
+                            onPick = { choice ->
+                                tagChooser.value = null
+                                container.appScope.launch {
+                                    val message = container.nfcTagHandler.startLock(choose.tag, choice.lockId)
+                                    Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onDismiss = { tagChooser.value = null },
+                        )
+                    }
                 }
             }
         }
@@ -408,7 +420,7 @@ class MainActivity : ComponentActivity() {
         val deviceCalendars = mutableStateOf<List<DeviceCalendar>>(emptyList())
         val nextCalendarMatch = mutableStateOf<CalendarWindow?>(null)
         val defaultsDraft = mutableStateOf<LockProfile?>(null)
-        val homeTab = mutableStateOf(HomeTab.QUICK_LOCK)
+        val homeTab = mutableStateOf(HomeTab.LOCK)
     }
 
     private val idle = IdleState()
@@ -606,6 +618,21 @@ class MainActivity : ComponentActivity() {
                 onDismiss = { testRun = null },
             )
         }
+
+        val quickLockSettings = LockSettings(
+            durationSec = quickDurationSec,
+            allowedAppCount = (quickApps - quickHidden).size,
+            hiddenAppCount = (quickHidden intersect quickApps).size,
+            bypassEnabled = quickBypass.enabled,
+            bypassWaitMinutes = quickBypass.waitMinutes,
+            dndEnabled = quickDnd,
+            dndLevel = quickDndLevel,
+            grayscale = quickGrayscale,
+            resumeMode = quickResumeMode,
+            choiceSeconds = quickChoiceSeconds,
+        )
+        val uiMode by container.settingsStore.uiMode.collectAsState()
+        val popupPackages by container.settingsStore.popupPackages.collectAsState()
 
         when (screen) {
             Screen.HOME -> HomeScreen(
@@ -824,18 +851,7 @@ class MainActivity : ComponentActivity() {
                     defaultsDraft = container.settingsStore.lockDefaults.value.toProfileDraft()
                     screen = Screen.DEFAULTS
                 },
-                quickLock = LockSettings(
-                    durationSec = quickDurationSec,
-                    allowedAppCount = (quickApps - quickHidden).size,
-                    hiddenAppCount = (quickHidden intersect quickApps).size,
-                    bypassEnabled = quickBypass.enabled,
-                    bypassWaitMinutes = quickBypass.waitMinutes,
-                    dndEnabled = quickDnd,
-                    dndLevel = quickDndLevel,
-                    grayscale = quickGrayscale,
-                    resumeMode = quickResumeMode,
-                    choiceSeconds = quickChoiceSeconds,
-                ),
+                quickLock = quickLockSettings,
                 presetsSec = presetsSec,
                 onPresetsChange = container.settingsStore::setDurationPresets,
                 alarmDayStartMinutes = alarmDayStart,
@@ -858,9 +874,15 @@ class MainActivity : ComponentActivity() {
                 onHomeActionChange = container.settingsStore::setHomeAction,
                 unlockIntoAllowedApp = container.settingsStore.unlockIntoAllowedApp.collectAsState().value,
                 onUnlockIntoAllowedAppChange = container.settingsStore::setUnlockIntoAllowedApp,
+                uiMode = uiMode,
+                onUiModeChange = container.settingsStore::setUiMode,
+                onOpenAssistant = { assistantOpen.value = true },
+                popupAppCount = popupPackages.size,
+                onEditPopupApps = { screen = Screen.POPUP_APPS },
                 startActions = remember {
                     StartLockActions(
                         onEditQuickApps = { screen = Screen.QUICK_APPS },
+                        onOpenQuickOptions = { screen = Screen.QUICK_OPTIONS },
                         onQuickSettingsChange = ::saveQuickSettings,
                         onResetQuickToDefaults = {
                             container.settingsStore.resetQuickToDefaults()
@@ -1298,8 +1320,34 @@ class MainActivity : ComponentActivity() {
                     container.settingsStore.setAllowedPackages(apps)
                     container.settingsStore.setQuickHiddenPackages(hidden)
                 },
+                onBack = { screen = Screen.QUICK_OPTIONS },
+                modifier = modifier,
+            )
+            Screen.QUICK_OPTIONS -> QuickLockOptionsScreen(
+                quickLock = quickLockSettings,
+                presetsSec = presetsSec,
+                nfcTags = nfcTags,
+                onChange = ::saveQuickSettings,
+                onEditAllowedApps = { screen = Screen.QUICK_APPS },
+                onResetToDefaults = {
+                    container.settingsStore.resetQuickToDefaults()
+                    val store = container.settingsStore
+                    if (store.quickDndEnabled.value || store.quickGrayscale.value) askForDndAccessIfNeeded()
+                },
                 onBack = goHome,
                 modifier = modifier,
+            )
+            Screen.POPUP_APPS -> AllowedAppsScreen(
+                loadApps = loadApps,
+                iconProvider = container.appCatalog,
+                selected = popupPackages,
+                hidden = emptySet(),
+                onSelectionChange = { apps, _ -> container.settingsStore.setPopupPackages(apps) },
+                onBack = goHome,
+                modifier = modifier,
+                title = stringResource(R.string.popup_apps_title),
+                description = stringResource(R.string.popup_apps_screen_hint),
+                allowHiding = false,
             )
             Screen.PROFILE -> profileDraft?.let { draft ->
                 ProfileEditorScreen(

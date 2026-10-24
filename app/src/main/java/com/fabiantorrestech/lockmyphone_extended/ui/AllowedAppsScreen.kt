@@ -46,6 +46,9 @@ import kotlinx.coroutines.withContext
  * during a lock; 👁 hides a checked app from that list (it stays allowed).
  *
  * @param hidden the checked apps that are hidden; always a subset of [selected].
+ * @param title the heading; "Allowed apps" when null.
+ * @param description replaces the phone and 👁 notes when set (other uses of this list).
+ * @param allowHiding false removes the 👁 button.
  */
 @Composable
 fun AllowedAppsScreen(
@@ -56,6 +59,9 @@ fun AllowedAppsScreen(
     onSelectionChange: (selected: Set<String>, hidden: Set<String>) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    title: String? = null,
+    description: String? = null,
+    allowHiding: Boolean = true,
 ) {
     BackHandler(onBack = onBack)
     val apps by produceState<List<LaunchableApp>?>(initialValue = null) {
@@ -78,20 +84,14 @@ fun AllowedAppsScreen(
 
     Column(modifier = modifier.fillMaxSize()) {
         Text(
-            stringResource(R.string.allowed_title),
+            title ?: stringResource(R.string.allowed_title),
             style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.padding(16.dp),
         )
-        Text(
-            stringResource(R.string.allowed_phone_note),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-        Text(
-            stringResource(R.string.allowed_hide_note),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        val notes = if (description != null) listOf(description) else listOf(stringResource(R.string.allowed_phone_note), stringResource(R.string.allowed_hide_note))
+        notes.forEach { note ->
+            Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
+        }
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -118,7 +118,7 @@ fun AllowedAppsScreen(
                     // Keeps the checkboxes clear of the scrollbar's touch strip.
                     contentPadding = PaddingValues(end = 24.dp),
                 ) {
-                    appItems(selectedGroup, selected, hidden, onSelectionChange, iconProvider)
+                    appItems(selectedGroup, selected, hidden, onSelectionChange, iconProvider, allowHiding)
                     if (selectedGroup.isNotEmpty() && otherGroup.isNotEmpty()) {
                         item(key = "other_apps_divider", contentType = "divider") {
                             Column(Modifier.padding(top = 8.dp)) {
@@ -132,7 +132,7 @@ fun AllowedAppsScreen(
                             }
                         }
                     }
-                    appItems(otherGroup, selected, hidden, onSelectionChange, iconProvider)
+                    appItems(otherGroup, selected, hidden, onSelectionChange, iconProvider, allowHiding)
                 }
                 FastScrollbar(listState, Modifier.align(Alignment.CenterEnd))
             }
@@ -150,6 +150,7 @@ private fun LazyListScope.appItems(
     hidden: Set<String>,
     onSelectionChange: (Set<String>, Set<String>) -> Unit,
     iconProvider: AppIconProvider,
+    allowHiding: Boolean,
 ) {
     items(apps, key = { it.packageName }, contentType = { "app" }) { app ->
         val packageName = app.packageName
@@ -164,7 +165,7 @@ private fun LazyListScope.appItems(
             }
         }
         AppRow(app, iconProvider, onClick = toggle) {
-            if (checked) {
+            if (checked && allowHiding) {
                 IconButton(onClick = {
                     onSelectionChange(selected, if (isHidden) hidden - packageName else hidden + packageName)
                 }) {

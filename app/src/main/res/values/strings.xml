@@ -1134,4 +1134,31 @@
     <string name="situation_study_desc">90 minutes with a calculator, music and your calendar. No early unlock.</string>
     <string name="situation_family">Family time</string>
     <string name="situation_family_desc">2 hours of dinner, family or friends. Do Not Disturb on.</string>
+
+    <!-- 0.10.0: Lock tab, Simple / Pro, Settings groups -->
+    <string name="tab_lock">Lock</string>
+    <string name="lock_tab_profiles">Your locks</string>
+    <string name="lock_tab_reorder">Reorder</string>
+    <string name="lock_tab_reorder_done">Done reordering</string>
+    <string name="quick_options">Options</string>
+    <string name="quick_options_title">Quick lock options</string>
+    <string name="quick_options_hint">Saved as you change them, and used every time you start Quick lock.</string>
+    <string name="quick_lock_for">Lock for</string>
+    <string name="mode_title">How much to show</string>
+    <string name="mode_simple">Simple</string>
+    <string name="mode_pro">Pro</string>
+    <string name="mode_simple_hint">Just what you need, with sensible defaults. Switch to Pro for every fine-grained control.</string>
+    <string name="mode_pro_hint">Every setting is shown. Nothing changes when you switch back to Simple; it\'s only hidden.</string>
+    <string name="mode_more_in_pro">More settings (location engine, beacon timing, intent API, diagnostics…) are in Pro mode.</string>
+    <string name="settings_group_setup">Setup</string>
+    <string name="settings_group_locks">Locks</string>
+    <string name="settings_group_advanced">Advanced</string>
+    <string name="assistant_card_title">Set-up assistant</string>
+    <string name="assistant_card_hint">Add starter locks for sleep, focus, study or family time. Your own locks are kept.</string>
+    <string name="more_kinds_title">More ways to lock automatically</string>
+    <string name="more_kinds_hint">Lock during calendar events, or by tapping an NFC sticker.</string>
+    <string name="popup_apps_title">Popups from other apps</string>
+    <string name="popup_apps_none">None</string>
+    <string name="popup_apps_hint">Their popups, bubbles and overlays may show over an allowed app (e.g. a password manager\'s autofill). Opening their screens still locks.</string>
+    <string name="popup_apps_screen_hint">Checked apps may show popups, bubbles and overlays over your allowed apps during a lock. Opening one of their screens still locks the phone. Applies to locks started after you change it.</string>
 </resources>
