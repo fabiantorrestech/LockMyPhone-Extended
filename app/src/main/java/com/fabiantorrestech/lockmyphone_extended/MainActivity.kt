@@ -103,7 +103,6 @@ import com.fabiantorrestech.lockmyphone_extended.ui.HomeScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.IntentApiActions
 import com.fabiantorrestech.lockmyphone_extended.ui.IntentApiUiState
 import com.fabiantorrestech.lockmyphone_extended.ui.LockedScreen
-import com.fabiantorrestech.lockmyphone_extended.ui.OnboardingScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.ProfileEditorScreen
 import com.fabiantorrestech.lockmyphone_extended.ui.LockSettings
 import com.fabiantorrestech.lockmyphone_extended.ui.FixRequest
@@ -161,6 +160,10 @@ import com.fabiantorrestech.lockmyphone_extended.ui.formatDurationLabel
 import com.fabiantorrestech.lockmyphone_extended.ui.theme.LockMyPhoneExtendedTheme
 import com.fabiantorrestech.lockmyphone_extended.ui.LocalUiMode
 import com.fabiantorrestech.lockmyphone_extended.ui.QuickLockOptionsScreen
+import com.fabiantorrestech.lockmyphone_extended.ui.SetupAssistantScreen
+import com.fabiantorrestech.lockmyphone_extended.ui.SetupResult
+import com.fabiantorrestech.lockmyphone_extended.data.EssentialApps
+import com.fabiantorrestech.lockmyphone_extended.data.Situation
 import androidx.compose.runtime.CompositionLocalProvider
 import kotlinx.coroutines.launch
 
@@ -294,7 +297,8 @@ class MainActivity : ComponentActivity() {
         // The UI is only reachable after the user unlocked, so the default profile can be seeded
         // from the older settings now.
         lifecycleScope.launch {
-            container.ensureDefaultProfile()
+            // A new install gets its profiles from the setup assistant; "Default" only if it made none.
+            if (container.settingsStore.onboardingDone.value) container.ensureDefaultProfile()
             container.seedCameraOnce()
         }
         readRequestedTab(intent)
@@ -334,13 +338,15 @@ class MainActivity : ComponentActivity() {
                                     onRefresh = { container.appScope.launch { container.placeRefresher.refresh() } },
                                 )
                             }
-                            !onboardingDone || assistantOpen.value -> OnboardingScreen(
-                                deviceProfilePicker = { DeviceProfileSection() },
-                                setupChecklist = { SetupChecklist(setupStatus.value, setupActions) },
-                                onFinish = {
-                                    container.settingsStore.setOnboardingDone(true)
-                                    assistantOpen.value = false
-                                },
+                            !onboardingDone || assistantOpen.value -> SetupAssistantScreen(
+                                setup = setupStatus.value,
+                                setupActions = setupActions,
+                                previewApps = ::assistantPreviewApps,
+                                iconProvider = container.appCatalog,
+                                initialAssistantPopup = container.settingsStore.assistantPopupAllowed.collectAsState().value,
+                                rerun = onboardingDone,
+                                onFinish = ::finishAssistant,
+                                onCancel = if (onboardingDone) ({ assistantOpen.value = false }) else null,
                                 modifier = contentModifier,
                             )
                             else -> IdleContent(contentModifier)
@@ -372,6 +378,32 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         readRequestedTab(intent)
         handleTagLaunch(intent)
+    }
+
+    /** The apps the setup assistant's chosen situations would allow on this phone, Phone first. */
+    private suspend fun assistantPreviewApps(situations: Set<Situation>): List<LaunchableApp> = withContext(Dispatchers.IO) {
+        val catalog = container.appCatalog
+        val essentials = EssentialApps(catalog)
+        val packages = listOfNotNull(essentials.dialer()) + essentials.essentials().visible +
+            Situation.entries.filter { it in situations }.flatMap { essentials.extrasFor(it) }
+        packages.distinct().map { LaunchableApp(it, catalog.label(it)) }
+    }
+
+    /** Writes the assistant's choices, then shows the Lock tab. */
+    private fun finishAssistant(result: SetupResult) {
+        lifecycleScope.launch {
+            val store = container.settingsStore
+            val installed = container.starterProfileInstaller.install(result.situations, result.bedtime)
+            store.setAssistantPopupAllowed(result.assistantPopup)
+            container.ensureDefaultProfile()
+            // A new schedule waits its usual minute, so tonight's lock doesn't start mid-setup.
+            installed.bedtimeScheduleId?.let { container.automationHolds.startCooldown(AutomationKey(LockKind.SCHEDULE, it)) }
+            container.scheduleScheduler.sync()
+            store.setOnboardingDone(true)
+            assistantOpen.value = false
+            idle.screen.value = Screen.HOME
+            idle.homeTab.value = HomeTab.LOCK
+        }
     }
 
     /** "Start which lock?" after tapping a tag linked to several locks. */

@@ -94,6 +94,13 @@ object StarterProfiles {
 }
 
 /**
+ * What [StarterProfileInstaller.install] created.
+ *
+ * @param bedtimeScheduleId the new nightly schedule, or null when none was added.
+ */
+data class InstallResult(val createdProfiles: Boolean, val bedtimeScheduleId: Long?)
+
+/**
  * Writes what the setup assistant chose. Safe to run again: a profile whose name already exists is
  * left alone, and the bedtime schedule is only added when the Sleep profile has none.
  */
@@ -106,9 +113,9 @@ class StarterProfileInstaller(
 
     /**
      * @param bedtime start and end minute of day for the Sleep profile's nightly schedule, or null for none.
-     * @return true if any profile was created (so no "Default" profile is needed).
+     * @return whether any profile was created (so no "Default" profile is needed), and the new schedule.
      */
-    suspend fun install(situations: Set<Situation>, bedtime: Pair<Int, Int>?): Boolean {
+    suspend fun install(situations: Set<Situation>, bedtime: Pair<Int, Int>?): InstallResult {
         val apps = essentials.essentials()
         val dao = database.profileDao()
         var created = false
@@ -118,16 +125,17 @@ class StarterProfileInstaller(
             dao.insertLast(StarterProfiles.profile(situation, name, apps, essentials.extrasFor(situation)))
             created = true
         }
-        if (bedtime != null && Situation.SLEEP in situations) addBedtime(bedtime)
+        val scheduleId = if (bedtime != null && Situation.SLEEP in situations) addBedtime(bedtime) else null
         seedEssentials(apps)
-        return created
+        return InstallResult(created, scheduleId)
     }
 
-    private suspend fun addBedtime(bedtime: Pair<Int, Int>) {
-        val sleep = database.profileDao().getByName(nameOf(Situation.SLEEP)) ?: return
+    /** The new schedule's ID, or null when the Sleep profile already has one. */
+    private suspend fun addBedtime(bedtime: Pair<Int, Int>): Long? {
+        val sleep = database.profileDao().getByName(nameOf(Situation.SLEEP)) ?: return null
         val schedules = database.scheduleDao()
-        if (schedules.getAll().any { it.profileId == sleep.id }) return
-        schedules.insertLast(StarterProfiles.bedtimeSchedule(sleep.id, bedtime.first, bedtime.second))
+        if (schedules.getAll().any { it.profileId == sleep.id }) return null
+        return schedules.insertLast(StarterProfiles.bedtimeSchedule(sleep.id, bedtime.first, bedtime.second))
     }
 
     /**

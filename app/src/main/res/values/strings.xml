@@ -127,15 +127,6 @@
     <string name="device_unverified">%1$s (not yet verified)</string>
 
     <!-- Onboarding -->
-    <string name="onboarding_title">Welcome</string>
-    <string name="onboarding_step">Step %1$d of %2$d</string>
-    <string name="onboarding_device_title">Your device</string>
-    <string name="onboarding_device_body">Launchers, phone apps and emergency screens differ by manufacturer. Pick your device type so the lock knows which system screens to allow.</string>
-    <string name="onboarding_permissions_title">Permissions</string>
-    <string name="onboarding_permissions_body">Device admin is required to lock the phone. Accessibility is needed to use allowed apps during a lock. You can finish now and grant these later from the home screen.</string>
-    <string name="onboarding_next">Next</string>
-    <string name="onboarding_back">Back</string>
-    <string name="onboarding_finish">Finish</string>
 
     <!-- Diagnostics -->
     <string name="diag_open">Diagnostics</string>
@@ -1161,4 +1152,39 @@
     <string name="popup_apps_none">None</string>
     <string name="popup_apps_hint">Their popups, bubbles and overlays may show over an allowed app (e.g. a password manager\'s autofill). Opening their screens still locks.</string>
     <string name="popup_apps_screen_hint">Checked apps may show popups, bubbles and overlays over your allowed apps during a lock. Opening one of their screens still locks the phone. Applies to locks started after you change it.</string>
+
+    <!-- 0.10.0: setup assistant -->
+    <string name="assist_get_started">Get started</string>
+    <string name="assist_finish">Finish</string>
+    <string name="assist_skip_for_now">Skip for now</string>
+    <string name="assist_welcome_title">Put your phone down, for real</string>
+    <string name="assist_welcome_body">During a lock, every unlock locks the phone again right away. Calls, emergency calls and the apps you choose keep working.</string>
+    <string name="assist_welcome_body2">This takes about a minute: a few permissions, then the moments you want to lock your phone. Everything can be changed later.</string>
+    <string name="assist_essentials_title">What the lock needs</string>
+    <string name="assist_essentials_body">Device admin and the accessibility service are required. The other two keep the lock reliable.</string>
+    <string name="assist_admin_why">Locks the screen again whenever it\'s unlocked during a lock.</string>
+    <string name="assist_accessibility_why">Sees which app is open, so allowed apps keep working and others lock. It doesn\'t read the screen.</string>
+    <string name="assist_notifications_why">Shows the time left, with Phone and Allowed apps buttons.</string>
+    <string name="assist_battery_why">Keeps the lock running in the background, even after hours.</string>
+    <string name="assist_restricted_hint">If Android says the accessibility setting is restricted: open App info for this app, tap ⋮, then Allow restricted settings, and try again.</string>
+    <string name="assist_situations_title">When do you want to lock your phone?</string>
+    <string name="assist_situations_body">Each one becomes a ready-to-start lock. Pick any.</string>
+    <string name="assist_situations_footer">You can rename, change or delete them later, and make your own.</string>
+    <string name="assist_apps_title">Apps that stay usable</string>
+    <string name="assist_apps_body">Every lock allows these, plus the apps of each situation you picked:</string>
+    <string name="assist_apps_camera">The camera is allowed too, but hidden from the list, so taking a photo inside a chat works.</string>
+    <string name="assist_apps_always">Emergency calls, Emergency SOS (pressing the power button 5 times) and the in-call screen always work, in every lock.</string>
+    <string name="assist_assistant_hint">Only the popup from the power button or a corner swipe. The full Google and Gemini apps still lock.</string>
+    <string name="assist_dnd_why">Sleep and Family time silence notifications. Without this, they lock but don\'t silence.</string>
+    <string name="assist_bedtime_title">Lock every night?</string>
+    <string name="assist_bedtime_body">The Sleep lock can start on its own at bedtime and end in the morning.</string>
+    <string name="assist_bedtime_switch">Lock every night</string>
+    <string name="assist_bedtime_start">Bedtime</string>
+    <string name="assist_bedtime_end">Wake up</string>
+    <string name="assist_bedtime_hint">Every day of the week; change days and times later in Automations. If it\'s already past bedtime, tonight\'s lock starts a minute after you finish.</string>
+    <string name="assist_done_title">You\'re all set</string>
+    <string name="assist_done_body">Start a lock from the Lock tab whenever you like.</string>
+    <string name="assist_done_creates">This adds:</string>
+    <string name="assist_done_bedtime">Sleep every night, %1$s to %2$s</string>
+    <string name="assist_done_pro">The app is in Simple mode. Settings → Pro shows every fine-grained control (beacons, timing, intent API…).</string>
 </resources>
