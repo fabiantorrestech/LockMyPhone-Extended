@@ -5,6 +5,7 @@
 
 | ADR | Title | Status | Supersedes |
 | --- | --- | --- | --- |
+| [0010](0010-a-companion-app-can-keep-more-than-one-synced-profile-by-slot.md) | A companion app can keep more than one synced profile, by slot | Accepted | — |
 | [0009](0009-accountabilibuddy-reads-profile-names-from-a-signature-guarded-content-provider.md) | Accountabilibuddy reads profile names from a signature-guarded content provider | Accepted | — |
 | [0008](0008-accountabilibuddy-keeps-its-own-profile-in-sync-over-a-signature-guarded-intent.md) | AccountabiliBuddy keeps its own profile in sync over a signature-guarded intent | Accepted | — |
 | [0007](0007-unlocks-open-the-countdown-and-not-allowed-apps-get-a-warning-overlay.md) | Unlocks open the countdown, and not-allowed apps get a warning overlay | Accepted | — |

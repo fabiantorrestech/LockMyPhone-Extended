@@ -24,6 +24,8 @@ import kotlinx.coroutines.withContext
  *   folders (`shown` false = found only by the search); a folder's apps are listed only inside it
  * - optional `order`: JSON `["folder:<name>" | "app:<package>", ...]`, the list's order
  *   Without either, the profile keeps its last folders and order.
+ * - optional `slot`: which of the manager's profiles this is (ADR 0010), e.g. "bedtime"; without
+ *   it, the manager's one profile as before. A slot's profile is marked `<manager>#<slot>`.
  *
  * The profile is found by its manager, so a profile you renamed keeps your name; only its apps
  * follow the sync. A lock that's already running isn't changed. The manager's own app is always
@@ -35,6 +37,8 @@ class ProfileSyncReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_SYNC_PROFILE) return
         val manager = intent.getStringExtra(EXTRA_MANAGER)?.trim()?.takeIf { it.isNotEmpty() } ?: return
         val name = intent.getStringExtra(EXTRA_NAME)?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val slot = intent.getStringExtra(EXTRA_SLOT)?.trim()?.takeIf { it.isNotEmpty() }
+        val owner = if (slot == null) manager else "$manager#$slot"
         val allowed = intent.getStringArrayExtra(EXTRA_ALLOWED).orEmpty().toSet() + manager
         val hidden = intent.getStringArrayExtra(EXTRA_HIDDEN).orEmpty().toSet() intersect allowed
         val sentLayout = readLayout(intent, allowed)
@@ -48,13 +52,14 @@ class ProfileSyncReceiver : BroadcastReceiver() {
         launchAsync(container.appScope) {
             withContext(Dispatchers.IO) {
                 val dao = container.database.profileDao()
-                val existing = dao.getManagedBy(manager) ?: dao.getByName(name)
+                // A slot's profile is never taken over by name from another of the manager's profiles.
+                val existing = dao.getManagedBy(owner) ?: dao.getByName(name)?.takeIf { it.managedBy == null || it.managedBy == owner }
                 if (existing != null) {
                     dao.update(
                         existing.copy(
                             allowedPackages = allowed,
                             hiddenPackages = hidden,
-                            managedBy = manager,
+                            managedBy = owner,
                             pickerLayout = sentLayout ?: existing.pickerLayout,
                         )
                     )
@@ -65,7 +70,7 @@ class ProfileSyncReceiver : BroadcastReceiver() {
                             allowedPackages = allowed,
                             hiddenPackages = hidden,
                             icon = MANAGED_ICON,
-                            managedBy = manager,
+                            managedBy = owner,
                             pickerLayout = sentLayout ?: PickerLayout.NONE,
                         )
                     )
@@ -100,6 +105,7 @@ class ProfileSyncReceiver : BroadcastReceiver() {
         const val EXTRA_HIDDEN = "hidden"
         const val EXTRA_FOLDERS = "folders"
         const val EXTRA_ORDER = "order"
+        const val EXTRA_SLOT = "slot"
         private const val MANAGED_ICON = "🤝"
     }
 }

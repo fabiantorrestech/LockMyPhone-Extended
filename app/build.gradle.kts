@@ -14,8 +14,8 @@ android {
         applicationId = "com.fabiantorrestech.lockmyphone_extended"
         minSdk = 30
         targetSdk = 37
-        versionCode = 6
-        versionName = "0.12.0"
+        versionCode = 7
+        versionName = "0.13.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
