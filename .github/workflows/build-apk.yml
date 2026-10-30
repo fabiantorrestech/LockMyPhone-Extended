@@ -17,20 +17,35 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
 
-      - uses: android-actions/setup-android@v3
+      # The runner image ships the Android SDK; install the platform this app compiles against.
+      - name: Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" "platforms;android-37" "build-tools;37.0.0" 2>&1 | tail -5 \
+            || echo "::warning::sdkmanager could not preinstall platform 37; AGP will try"
 
       - uses: gradle/actions/setup-gradle@v4
 
       # gradlew is committed from Windows without the executable bit, so run it through bash.
       - name: Build debug APK
-        run: bash ./gradlew assembleDebug --stacktrace
+        run: |
+          set -o pipefail
+          bash ./gradlew assembleDebug 2>&1 | tee build.log || {
+            # Run logs aren't always reachable, so surface the error lines as annotations.
+            grep -E "^e: |error:|FAILURE|What went wrong" -A3 build.log | head -40 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          }
 
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk LockMyPhone-Extended-debug.apk
