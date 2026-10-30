@@ -1,5 +1,5 @@
-# Builds a debug APK on every push. The APK is uploaded as a run artifact and
-# attached to the rolling "latest-debug" prerelease, so it can be grabbed from a phone.
+# Builds the release APK (R8, debug-signed) on every push. The APK is uploaded as a run artifact and
+# attached to the rolling "latest-build" prerelease, so it can be grabbed from a phone.
 name: Build APK
 
 on:
@@ -36,10 +36,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       # gradlew is committed from Windows without the executable bit, so run it through bash.
-      - name: Build debug APK
+      - name: Build release APK
         run: |
           set -o pipefail
-          bash ./gradlew assembleDebug 2>&1 | tee build.log || {
+          bash ./gradlew assembleRelease 2>&1 | tee build.log || {
             # Run logs aren't always reachable, so surface the error lines as annotations.
             grep -E "^e: |error:|FAILURE|What went wrong" -A3 build.log | head -40 | while IFS= read -r line; do
               echo "::error::$line"
@@ -48,20 +48,20 @@ jobs:
           }
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk LockMyPhone-Extended-debug.apk
+        run: cp app/build/outputs/apk/release/app-release.apk LockMyPhone-Extended.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LockMyPhone-Extended-debug
-          path: LockMyPhone-Extended-debug.apk
+          name: LockMyPhone-Extended
+          path: LockMyPhone-Extended.apk
 
-      - name: Publish to latest-debug prerelease
+      - name: Publish to latest-build prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete latest-debug --yes --cleanup-tag || true
-          gh release create latest-debug LockMyPhone-Extended-debug.apk \
+          gh release delete latest-build --yes --cleanup-tag || true
+          gh release create latest-build LockMyPhone-Extended.apk \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "Latest debug build" \
-            --notes "Debug APK built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}."
+            --title "Latest build" \
+            --notes "Release APK built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}."
