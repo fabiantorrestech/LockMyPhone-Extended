@@ -6,6 +6,7 @@ An Android app that recreates Thomas Kahn's *Lock My Phone*: during a lock perio
 - Built with Android Studio 2026.1 on native Windows. The CLI needs `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"`, then `./gradlew assembleDebug`.
 - Test targets: the `Pixel_9` AVD (API 36) and the owner's Pixel 7 over USB adb. `adb` is on PATH.
 - NFC, QRAlarm and Emergency SOS can only be tested on real hardware. **Never place a real emergency call when testing**; cancel the SOS countdown.
+- Release builds are signed with the debug key (`~/.android/debug.keystore`; CI restores it from secret `DEBUG_KEYSTORE_B64`). Never change that key. versionCode is the git commit count. Pushes to `main` publish `LockMyPhoneExtended.apk` to the hub repo `fabiantorrestech/android-apps` (release `lockmyphoneextended`, secret `APP_HUB_TOKEN`); the hub's `scripts/publish-local.ps1` does the same from the PC.
 
 ## Stack
 - Kotlin + Jetpack Compose. AGP 9 provides Kotlin built in, so there is no separate `kotlin-android` plugin.
