@@ -243,7 +243,7 @@
         <!-- A companion app signed with the same key reads profile names, nothing else (ADR 0009). -->
         <provider
             android:name=".trigger.ProfilesProvider"
-            android:authorities="com.fabiantorrestech.lockmyphone_extended.profiles"
+            android:authorities="${applicationId}.profiles"
             android:directBootAware="true"
             android:exported="true"
             android:permission="com.fabiantorrestech.lockmyphone_extended.permission.MANAGE_PROFILES" />

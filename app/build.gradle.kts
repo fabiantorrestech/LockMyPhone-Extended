@@ -21,6 +21,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // A separate app next to the released one, same key (ADR 7 in android-apps).
+            applicationIdSuffix = ".debug"
+        }
         release {
             // M9: R8 shrinks and optimizes, which makes Compose lists much smoother than debug.
             optimization {
@@ -36,6 +40,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

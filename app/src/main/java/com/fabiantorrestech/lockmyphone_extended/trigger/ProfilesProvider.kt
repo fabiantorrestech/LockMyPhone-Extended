@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.UriMatcher
 import android.database.Cursor
 import android.net.Uri
+import com.fabiantorrestech.lockmyphone_extended.BuildConfig
 import com.fabiantorrestech.lockmyphone_extended.LockApp
 
 /**
@@ -44,7 +45,8 @@ class ProfilesProvider : ContentProvider() {
         throw UnsupportedOperationException(READ_ONLY)
 
     companion object {
-        const val AUTHORITY = "com.fabiantorrestech.lockmyphone_extended.profiles"
+        // Per build: the .debug build must not claim the release app's authority.
+        const val AUTHORITY = BuildConfig.APPLICATION_ID + ".profiles"
         private const val PROFILES = 1
         private const val READ_ONLY = "Profiles are read-only"
         private val MATCHER = UriMatcher(UriMatcher.NO_MATCH).apply { addURI(AUTHORITY, "profiles", PROFILES) }
