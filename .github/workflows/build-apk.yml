@@ -57,7 +57,9 @@ jobs:
           fi
           mkdir -p ~/.android
           echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
-          echo "ANDROID_USER_HOME=${ANDROID_USER_HOME:-unset} ANDROID_PREFS_ROOT=${ANDROID_PREFS_ROOT:-unset} ANDROID_SDK_HOME=${ANDROID_SDK_HOME:-unset}"
+          # AGP 9 on Linux looks in ~/.config/.android (XDG) unless ANDROID_USER_HOME is set, and would
+          # quietly generate a new key there. Point it at the restored keystore for the rest of the job.
+          echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
           keytool -list -v -keystore ~/.android/debug.keystore -storepass android | grep -m1 'SHA256:'
 
       - uses: gradle/actions/setup-gradle@v4
