@@ -1,6 +1,7 @@
-# Builds the release APK (R8, debug-signed) on every push. The APK is uploaded as a run artifact and
-# attached to the rolling "latest-build" prerelease, so it can be grabbed from a phone. Pushes to main
-# also replace the APK on the app hub (fabiantorrestech/android-apps, release "lockmyphoneextended").
+# Builds the release APK (R8, debug-signed) and the debug APK (separate .debug app) on every push. Both are
+# uploaded as a run artifact and attached to the rolling "latest-build" prerelease, so they can be grabbed
+# from a phone. Pushes to main also replace both on the app hub (fabiantorrestech/android-apps, release
+# "lockmyphoneextended"; hub ADR 7), the same two files as the hub's scripts/publish-local.ps1.
 name: Build APK
 
 on:
@@ -16,6 +17,7 @@ concurrency:
 
 env:
   APK_NAME: LockMyPhoneExtended.apk
+  DEBUG_APK_NAME: LockMyPhoneExtended-debug.apk
   HUB_REPO: fabiantorrestech/android-apps
   HUB_TAG: lockmyphoneextended
 
@@ -59,10 +61,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       # gradlew is committed from Windows without the executable bit, so run it through bash.
-      - name: Build release APK
+      - name: Build release and debug APKs
         run: |
           set -o pipefail
-          bash ./gradlew assembleRelease 2>&1 | tee build.log || {
+          bash ./gradlew assembleRelease assembleDebug 2>&1 | tee build.log || {
             # Run logs aren't always reachable, so surface the error lines as annotations.
             grep -E "^e: |error:|FAILURE|What went wrong" -A3 build.log | head -40 | while IFS= read -r line; do
               echo "::error::$line"
@@ -70,27 +72,31 @@ jobs:
             exit 1
           }
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
+      - name: Rename APKs
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
+          cp app/build/outputs/apk/debug/app-debug.apk "$DEBUG_APK_NAME"
 
       - uses: actions/upload-artifact@v4
         with:
           name: LockMyPhoneExtended
-          path: ${{ env.APK_NAME }}
+          path: |
+            ${{ env.APK_NAME }}
+            ${{ env.DEBUG_APK_NAME }}
 
       - name: Publish to latest-build prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest-build --yes --cleanup-tag || true
-          gh release create latest-build "$APK_NAME" \
+          gh release create latest-build "$APK_NAME" "$DEBUG_APK_NAME" \
             --prerelease \
             --target "$GITHUB_SHA" \
             --title "Latest build" \
-            --notes "Release APK built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}."
+            --notes "Release and debug APKs built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}."
 
       # Same checks as the hub's scripts/publish-local.ps1: the signer must be the key the hub expects
-      # (apps.json -> keys.PC_DEBUG), then the APK replaces the one on the app's rolling release.
+      # (apps.json -> keys.DEBUG_SHARED), then both APKs replace the ones on the app's rolling release.
       - name: Publish to the app hub
         if: github.ref == 'refs/heads/main'
         env:
@@ -101,11 +107,11 @@ jobs:
             exit 1
           fi
           build_tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          expected=$(curl -fsSL "https://raw.githubusercontent.com/$HUB_REPO/main/apps.json" | jq -r '.keys.PC_DEBUG')
+          expected=$(curl -fsSL "https://raw.githubusercontent.com/$HUB_REPO/main/apps.json" | jq -r '.keys.DEBUG_SHARED')
           actual=$("$build_tools/apksigner" verify --print-certs "$APK_NAME" \
             | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
           if [ "$actual" != "$expected" ]; then
-            echo "::error::$APK_NAME is signed with $actual, expected the PC_DEBUG key $expected. Check secret DEBUG_KEYSTORE_B64."
+            echo "::error::$APK_NAME is signed with $actual, expected the DEBUG_SHARED key $expected. Check secret DEBUG_KEYSTORE_B64."
             exit 1
           fi
           badging=$("$build_tools/aapt2" dump badging "$APK_NAME" | head -1)
@@ -114,9 +120,9 @@ jobs:
           title="LockMyPhone Extended $name ($code)"
           notes="Built by GitHub Actions from ${GITHUB_REPOSITORY}@${GITHUB_SHA::7} (main) on $(date -u '+%Y-%m-%d %H:%M') UTC."
           if gh release view "$HUB_TAG" --repo "$HUB_REPO" --json tagName > /dev/null 2>&1; then
-            gh release upload "$HUB_TAG" "$APK_NAME" --repo "$HUB_REPO" --clobber
+            gh release upload "$HUB_TAG" "$APK_NAME" "$DEBUG_APK_NAME" --repo "$HUB_REPO" --clobber
             gh release edit "$HUB_TAG" --repo "$HUB_REPO" --title "$title" --notes "$notes"
           else
-            gh release create "$HUB_TAG" "$APK_NAME" --repo "$HUB_REPO" --target main --title "$title" --notes "$notes" --latest=false
+            gh release create "$HUB_TAG" "$APK_NAME" "$DEBUG_APK_NAME" --repo "$HUB_REPO" --target main --title "$title" --notes "$notes" --latest=false
           fi
           echo "Published $title to $HUB_REPO release '$HUB_TAG'."
