@@ -57,6 +57,8 @@ jobs:
           fi
           mkdir -p ~/.android
           echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          echo "ANDROID_USER_HOME=${ANDROID_USER_HOME:-unset} ANDROID_PREFS_ROOT=${ANDROID_PREFS_ROOT:-unset} ANDROID_SDK_HOME=${ANDROID_SDK_HOME:-unset}"
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android | grep -m1 'SHA256:'
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -109,7 +111,7 @@ jobs:
           build_tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           expected=$(curl -fsSL "https://raw.githubusercontent.com/$HUB_REPO/main/apps.json" | jq -r '.keys.DEBUG_SHARED')
           actual=$("$build_tools/apksigner" verify --print-certs "$APK_NAME" \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+            | sed -nE 's/^(Signer #1|V[0-9]+ Signer:) certificate SHA-256 digest: //p' | head -1)
           if [ "$actual" != "$expected" ]; then
             echo "::error::$APK_NAME is signed with $actual, expected the DEBUG_SHARED key $expected. Check secret DEBUG_KEYSTORE_B64."
             exit 1
