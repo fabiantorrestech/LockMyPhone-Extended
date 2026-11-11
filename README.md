@@ -135,7 +135,7 @@ Only one lock runs at a time. When a lock tries to start during another, their k
 
 ## Install
 
-1. Download the APK from **[Releases](../../releases)**.
+1. Download **LockMyPhoneExtended.apk** from the [app hub](https://fabiantorrestech.github.io/android-apps/) (newest build of `main`; [direct link](https://github.com/fabiantorrestech/android-apps/releases/download/lockmyphoneextended/LockMyPhoneExtended.apk)). The [latest-build prerelease](../../releases/tag/latest-build) here holds the newest build of any branch.
 2. On the phone, allow installing from your browser or file manager when asked, then open the APK.
 3. Open **LockMyPhone Extended** and follow the setup checklist.
 
@@ -364,6 +364,8 @@ Requirements: Android Studio (2026.1 or newer; uses its bundled JDK), Android SD
 
 - On Windows from a shell, set `JAVA_HOME` to Studio's `jbr` folder first.
 - The APKs are written to `app/build/outputs/apk/`.
+- versionCode is the commit count (`git rev-list --count HEAD`), so builds need the full git history; a source zip or shallow clone fails to configure.
+- Every push to `main` publishes the release APK to the [app hub](https://github.com/fabiantorrestech/android-apps) (see its README for the secrets each app repo needs).
 
 ---
 

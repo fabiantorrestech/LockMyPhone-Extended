@@ -14,7 +14,11 @@ android {
         applicationId = "com.fabiantorrestech.lockmyphone_extended"
         minSdk = 30
         targetSdk = 37
-        versionCode = 7
+        // versionCode = commits on this branch, so PC and CI builds agree and only go up (android-apps ADR 3).
+        // Needs the full git history: CI checks out with fetch-depth 0.
+        versionCode = providers.exec {
+            commandLine("git", "rev-list", "--count", "HEAD")
+        }.standardOutput.asText.get().trim().toInt()
         versionName = "0.13.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
